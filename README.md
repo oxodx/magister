@@ -55,16 +55,18 @@ The interface, dates, menus and application errors are English. The app requests
 English from Magister where supported; school-written content and third-party
 login/publisher pages retain the language supplied by those services.
 
-Five fixed destinations keep navigation compact: Schedule, Grades, Tasks, Books
-and More. More contains messages, attendance and account actions. The header
+Five fixed destinations keep navigation compact: Schedule, Grades, Tasks,
+Attendance and More. More contains messages, books, settings and account actions. The header
 menu holds refresh, search and return-to-today. Navigation icons are drawn with
 ImGui vector primitives and require no external image or icon package.
 
-- Schedule: past/future navigation, a week strip and local-time conversion.
+- Schedule: swipe between days, use the week strip, see homework markers and
+  view all times in the device's local timezone.
 - Grades: current-enrollment overview, recent test names and full test details.
 - Tasks: assignments within the previous/next 90 days, with detail views.
-- Books: the school's textbook catalog and digital publisher access links.
-- Messages and attendance: browsable lists and detail views.
+- Attendance: absence and attendance records are always one tap away.
+- More: messages, the textbook catalog, digital publisher links and settings.
+- Settings: homework labels, compact schedule cards and reduced motion.
 
 Official Magister web login handles credentials and school two-factor prompts.
 Digital books open their authorized publisher link in the browser; the publisher

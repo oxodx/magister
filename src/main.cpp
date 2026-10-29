@@ -2,6 +2,8 @@
 #include "imgui_impl_opengl3.h"
 #include "imgui_impl_sdl2.h"
 #include "magister_client.h"
+#include "app_settings.h"
+#include "schedule_gesture.h"
 #include "scroll_physics.h"
 
 #include <GLES3/gl3.h>
@@ -28,8 +30,10 @@ namespace {
 SDL_Window *window = nullptr;
 SDL_GLContext glContext = nullptr;
 std::string iniPath;
+std::string settingsPath;
 bool requestKeyboard = false;
 int agendaDay = 0;
+int requestedDayChange = 0;
 
 enum class Page { Schedule, Grades, Assignments, Books, Messages, Absences };
 
@@ -41,14 +45,17 @@ Rows emptyRows() {
 
 struct TouchScroll {
   ImVec2 min{}, max{};
-  bool down = false, eligible = false, dragging = false;
-  float start = 0, last = 0, delta = 0, velocity = 0;
+  bool down = false, eligible = false, dragging = false, swiping = false;
+  float start = 0, last = 0, startX = 0, lastX = 0;
+  float delta = 0, velocity = 0, verticalTravel = 0;
   Uint32 timestamp = 0;
   void reset() {
-    delta = velocity = 0;
-    eligible = dragging = false;
+    delta = velocity = verticalTravel = 0;
+    eligible = dragging = swiping = false;
   }
 } touchScroll;
+
+magister::AppSettings settings;
 
 bool resetFeedScroll = true;
 
@@ -290,6 +297,8 @@ int main(int, char **) {
   ImGuiIO &io = ImGui::GetIO();
   io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
   iniPath = std::string(SDL_AndroidGetInternalStoragePath()) + "/imgui.ini";
+  settingsPath = std::string(SDL_AndroidGetInternalStoragePath()) + "/settings.txt";
+  settings = magister::loadSettings(settingsPath);
   io.IniFilename = iniPath.c_str();
   int screenWidth = 0, screenHeight = 0;
   SDL_GetWindowSize(window, &screenWidth, &screenHeight);
@@ -349,6 +358,7 @@ int main(int, char **) {
           touchScroll.reset();
           touchScroll.down = true;
           touchScroll.start = touchScroll.last = fingerPos.y;
+          touchScroll.startX = touchScroll.lastX = fingerPos.x;
           touchScroll.timestamp = event.tfinger.timestamp;
           touchScroll.eligible = fingerPos.x >= touchScroll.min.x &&
                                  fingerPos.x <= touchScroll.max.x &&
@@ -359,14 +369,24 @@ int main(int, char **) {
         } else if (event.type == SDL_FINGERMOTION) {
           fingerMoved = true;
           float y = fingerPos.y;
+          const float dx = fingerPos.x - touchScroll.startX;
+          const float dy = y - touchScroll.start;
           if (touchScroll.eligible && !touchScroll.dragging &&
-              std::abs(y - touchScroll.start) > 7 * uiScale) {
+              !touchScroll.swiping && std::abs(dx) > 12 * uiScale &&
+              std::abs(dx) > std::abs(dy) * 1.25f) {
+            touchScroll.swiping = true;
+            io.AddMousePosEvent(-10000, -10000);
+            io.AddMouseButtonEvent(0, false);
+          } else if (touchScroll.eligible && !touchScroll.dragging &&
+                     !touchScroll.swiping && std::abs(dy) > 7 * uiScale &&
+                     std::abs(dy) > std::abs(dx) * 0.8f) {
             touchScroll.dragging = true;
             io.AddMousePosEvent(-10000, -10000);
             io.AddMouseButtonEvent(0, false);
           }
           if (touchScroll.dragging) {
             float distance = y - touchScroll.last;
+            touchScroll.verticalTravel += std::abs(distance);
             float seconds = std::max(
                 0.001f,
                 (event.tfinger.timestamp - touchScroll.timestamp) / 1000.0f);
@@ -377,9 +397,15 @@ int main(int, char **) {
                 seconds);
           }
           touchScroll.last = y;
+          touchScroll.lastX = fingerPos.x;
           touchScroll.timestamp = event.tfinger.timestamp;
         } else if (event.type == SDL_FINGERUP) {
-          if (!touchScroll.dragging)
+          if (touchScroll.eligible && touchScroll.swiping) {
+            requestedDayChange = magister::daySwipe(
+                fingerPos.x - touchScroll.startX,
+                fingerPos.y - touchScroll.start, 64 * uiScale);
+          }
+          if (!touchScroll.dragging && !touchScroll.swiping)
             io.AddMousePosEvent(fingerPos.x, fingerPos.y);
           io.AddMouseButtonEvent(0, false);
           touchScroll.down = false;
@@ -390,12 +416,14 @@ int main(int, char **) {
       if (event.type == SDL_QUIT)
         running = false;
     }
-    if (fingerMoved && !touchScroll.dragging)
+    if (fingerMoved && !touchScroll.dragging && !touchScroll.swiping)
       io.AddMousePosEvent(fingerPos.x, fingerPos.y);
     fingerMoved = false;
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplSDL2_NewFrame();
     ImGui::NewFrame();
+    if (settings.reduceMotion && !touchScroll.down)
+      touchScroll.velocity = 0;
     mobileUi();
     ImGui::Render();
     if (requestKeyboard) {

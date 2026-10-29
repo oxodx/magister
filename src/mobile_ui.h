@@ -4,6 +4,7 @@ ImFont *headingFont = nullptr;
 ImVec4 ink, muted, blue, surface;
 std::array<char, 128> searchText{};
 bool moreScreen = false;
+bool settingsScreen = false;
 bool searchVisible = false;
 magister::ScrollPhysics feedScroll;
 float dp(float v) { return v * uiScale; }
@@ -170,6 +171,12 @@ void rowCard(Page page,const magister::Json &row,float height,bool busy) {
     if (room.empty()) room=value(row,{"Lokatie","Locatie"});
     auto teacher=firstNested(row,"Docenten",{"Naam","Docentcode"});
     secondary(room+(room.empty()||teacher.empty() ? "" : " / ")+teacher);
+    auto homework=value(row,{"Inhoud","Huiswerk","Aantekening"});
+    if(settings.showHomeworkBadges && !plainText(homework).empty()) {
+      ImGui::PushStyleColor(ImGuiCol_Text,blue);
+      ImGui::TextUnformatted("HOMEWORK");
+      ImGui::PopStyleColor();
+    }
     ImGui::PopTextWrapPos(); ImGui::EndGroup();
   } else if (page==Page::Grades) {
     auto score=value(row,{"CijferStr","Waarde","waarde"});
@@ -217,9 +224,9 @@ void navIcon(int type,ImVec2 c,ImU32 color) {
     d->AddLine({c.x-s*.55f,c.y},{c.x-s*.1f,c.y+s*.45f},color,t);
     d->AddLine({c.x-s*.1f,c.y+s*.45f},{c.x+s*.65f,c.y-s*.45f},color,t);
   } else if(type==3) {
-    d->AddRect({c.x-s,c.y-s},{c.x+s,c.y+s},color,dp(2),0,t);
-    d->AddLine({c.x-s*.45f,c.y-s},{c.x-s*.45f,c.y+s},color,t);
-    d->AddLine({c.x,c.y-s*.4f},{c.x+s*.6f,c.y-s*.4f},color,t);
+    d->AddCircle(c,s,color,0,t);
+    d->AddLine(c,{c.x,c.y-s*.55f},color,t);
+    d->AddLine(c,{c.x+s*.45f,c.y+s*.25f},color,t);
   } else {
     for(int y=-1;y<=1;y+=2) for(int x=-1;x<=1;x+=2)
       d->AddRect({c.x+x*s*.5f-dp(3),c.y+y*s*.5f-dp(3)},{c.x+x*s*.5f+dp(3),c.y+y*s*.5f+dp(3)},color,dp(1),0,t);
@@ -239,7 +246,7 @@ bool bottomItem(int index,const char *label,bool selected,float width) {
   ImGui::PopID(); return pressed;
 }
 void switchPage(Page page) {
-  moreScreen=false; searchVisible=false; searchText.fill(0);
+  moreScreen=false; settingsScreen=false; searchVisible=false; searchText.fill(0);
   SDL_StopTextInput(); load(page);
 }
 void weekPicker() {
@@ -267,35 +274,19 @@ void weekPicker() {
   }
   ImGui::PopStyleVar();
 }
-void moreView(bool busy) {
-  beginFeed();
-  secondary("YOUR SCHOOL"); gap(4);
-  const char *titles[]={"Messages","Attendance"};
-  const char *descriptions[]={"Your messages and conversations","View your attendance records"};
-  for(int i=0;i<2;++i) {
-    ImGui::PushID(i);
-    ImGui::BeginDisabled(busy);
-    if(action((std::string(titles[i])+"\n"+descriptions[i]).c_str(),false,ImGui::GetContentRegionAvail().x/uiScale,76))
-      switchPage(i==0 ? Page::Messages : Page::Absences);
-    ImGui::EndDisabled(); ImGui::PopID();
-  }
-  gap(20); ImGui::SeparatorText("Account");
-  secondary(std::string(state.school.data())+".magister.net");
-  gap(8); ImGui::BeginDisabled(busy);
-  if(action("Sign out",false,0,44)) {
-    std::lock_guard lock(state.mutex);
-    state.loggedIn=false; state.client.reset(); state.rows=emptyRows(); state.detailOpen=false;
-    moreScreen=false;
-  }
-  ImGui::EndDisabled();
-  ImGui::EndChild();
-}
+#include "ui_more_page.h"
+#include "ui_settings_page.h"
 void mobileUi() {
   bool logged,busy,detailOpen; Page page; std::string status,error; Rows snapshot,detail;
   int loadedDay;
   { std::lock_guard lock(state.mutex); logged=state.loggedIn; busy=state.busy; detailOpen=state.detailOpen; page=state.page; status=state.status; error=state.error; snapshot=state.rows; detail=state.detail; loadedDay=state.loadedDay; }
   const auto &rows=*snapshot;
-  if(logged && !moreScreen && page==Page::Schedule && !detailOpen && !busy && error.empty() && loadedDay!=agendaDay) load(Page::Schedule);
+  if(requestedDayChange) {
+    if(logged && !moreScreen && !settingsScreen && page==Page::Schedule && !detailOpen)
+      changeDay(agendaDay+requestedDayChange);
+    requestedDayChange=0;
+  }
+  if(logged && !moreScreen && !settingsScreen && page==Page::Schedule && !detailOpen && !busy && error.empty() && loadedDay!=agendaDay) load(Page::Schedule);
   const char *names[]={"Schedule","Grades","Tasks","Books","Messages","Attendance"};
   ImGui::SetNextWindowPos({0,0}); ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
   auto flags=ImGuiWindowFlags_NoDecoration|ImGuiWindowFlags_NoSavedSettings;
@@ -324,11 +315,11 @@ void mobileUi() {
         resetFeedScroll=true; touchScroll.reset();
       }
     } else {
-      heading(moreScreen ? "More" : names[static_cast<int>(page)]);
-      secondary(moreScreen ? "Everything for your school day" : std::string(state.school.data())+" / Magister");
+      heading(settingsScreen ? "Settings" : (moreScreen ? "More" : names[static_cast<int>(page)]));
+      secondary(moreScreen ? "Everything else, neatly organised" : std::string(state.school.data())+" / Magister");
     }
     ImGui::EndGroup();
-    if(!moreScreen && !detailOpen) {
+    if(!moreScreen && !settingsScreen && !detailOpen) {
       ImGui::SameLine(); ImGui::SetCursorPosX(right-dp(44));
       if(action("...",false,44,44)) ImGui::OpenPopup("options");
       if(ImGui::BeginPopup("options")) {
@@ -346,7 +337,8 @@ void mobileUi() {
     if(busy) ImGui::ProgressBar(-static_cast<float>(ImGui::GetTime()),{-1,dp(2)},"");
     else ImGui::Dummy({0,dp(2)});
     gap(4);
-    if(moreScreen) moreView(busy);
+    if(settingsScreen) settingsView();
+    else if(moreScreen) moreView(busy);
     else if(detailOpen) detailsView(page,*detail,busy,error);
     else {
       if(page==Page::Schedule) {
@@ -384,7 +376,7 @@ void mobileUi() {
         gap(24); heading(page==Page::Schedule ? "Nothing scheduled" : "You're all caught up");
         secondary(page==Page::Schedule ? "Choose another day in the week above." : "New items will appear here when your school adds them.");
       }
-      const float height=dp(page==Page::Books ? 110 : 88);
+      const float height=dp(page==Page::Books ? 110 : (page==Page::Schedule && settings.compactSchedule ? 80 : 88));
       ImGuiListClipper clipper;
       clipper.Begin(static_cast<int>(visible.size()),height+ImGui::GetStyle().ItemSpacing.y);
       while(clipper.Step()) for(int i=clipper.DisplayStart;i<clipper.DisplayEnd;++i) {
@@ -399,17 +391,22 @@ void mobileUi() {
     draw->AddLine({navPos.x,navPos.y-dp(6)},{navPos.x+ImGui::GetContentRegionAvail().x,navPos.y-dp(6)},IM_COL32(47,55,69,255));
     float width=(ImGui::GetContentRegionAvail().x-dp(16))/5;
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{dp(4),0});
-    const char *tabs[]={"Schedule","Grades","Tasks","Books","More"};
-    int active=moreScreen || static_cast<int>(page)>=4 ? 4 : static_cast<int>(page);
+    const char *tabs[]={"Schedule","Grades","Tasks","Attendance","More"};
+    int active=moreScreen || settingsScreen || page==Page::Books || page==Page::Messages ? 4 :
+      (page==Page::Absences ? 3 : static_cast<int>(page));
     ImGui::BeginDisabled(busy);
     for(int i=0;i<5;++i) {
       if(i) ImGui::SameLine();
       if(bottomItem(i,tabs[i],active==i,width)) {
         if(i==4) {
           moreScreen=true;
+          settingsScreen=false;
           { std::lock_guard lock(state.mutex); state.detailOpen=false; }
           SDL_StopTextInput(); resetFeedScroll=true; touchScroll.reset();
-        } else if(moreScreen || static_cast<int>(page)!=i || detailOpen) switchPage(static_cast<Page>(i));
+        } else {
+          Page target=i==0 ? Page::Schedule : i==1 ? Page::Grades : i==2 ? Page::Assignments : Page::Absences;
+          if(moreScreen || settingsScreen || page!=target || detailOpen) switchPage(target);
+        }
       }
     }
     ImGui::EndDisabled(); ImGui::PopStyleVar();

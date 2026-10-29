@@ -4,6 +4,7 @@ app/build/
 app/.cxx/
 local.properties
 *.iml
+.classpath
 .project
 .settings/
 .externalNativeBuild/

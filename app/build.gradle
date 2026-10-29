@@ -1,0 +1,20 @@
+plugins { id 'com.android.application' }
+
+android {
+  namespace 'org.magister.nativeapp'
+  compileSdk 33
+  ndkVersion '28.2.13676358'
+  ndkPath '/home/oxod/.buildozer/android/platform/android-ndk-r28c'
+
+  defaultConfig {
+    applicationId 'org.magister.nativeapp'
+    minSdk 24
+    targetSdk 33
+    versionCode 1
+    versionName '1.0.0'
+    ndk { abiFilters 'arm64-v8a', 'armeabi-v7a' }
+  }
+
+  externalNativeBuild { cmake { path file('../CMakeLists.txt'); version '3.22.1' } }
+  buildTypes { release { minifyEnabled false } }
+}

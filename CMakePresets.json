@@ -1,0 +1,16 @@
+{
+  "version": 3,
+  "configurePresets": [{
+    "name": "android-arm64",
+    "displayName": "Android ARM64 (NDK)",
+    "generator": "Ninja",
+    "binaryDir": "${sourceDir}/build/native-arm64",
+    "cacheVariables": {
+      "CMAKE_TOOLCHAIN_FILE": "$env{ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake",
+      "ANDROID_ABI": "arm64-v8a",
+      "ANDROID_PLATFORM": "android-24",
+      "CMAKE_BUILD_TYPE": "Debug"
+    }
+  }],
+  "buildPresets": [{ "name": "android-arm64", "configurePreset": "android-arm64", "targets": ["magister"] }]
+}

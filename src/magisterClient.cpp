@@ -7,8 +7,8 @@
 #include <chrono>
 #include <iomanip>
 #include <jni.h>
-#include <regex>
 #include <random>
+#include <regex>
 #include <sstream>
 #include <stdexcept>
 #include <vector>
@@ -43,8 +43,13 @@ std::string randomHex(size_t count) {
   std::mt19937_64 generator(device());
   std::ostringstream out;
   out << std::hex << std::setfill('0');
-  while (count >= 16) { out << std::setw(16) << generator(); count -= 16; }
-  if (count) out << std::setw(static_cast<int>(count)) << (generator() & ((1ULL << (count * 4)) - 1));
+  while (count >= 16) {
+    out << std::setw(16) << generator();
+    count -= 16;
+  }
+  if (count)
+    out << std::setw(static_cast<int>(count))
+        << (generator() & ((1ULL << (count * 4)) - 1));
   return out.str();
 }
 
@@ -143,8 +148,8 @@ Json parseOidcConfig(const std::string &script) {
         // Some deployments serve a JavaScript object with unquoted keys
         // or single-quoted strings. Extract the fields we actually use.
         Json result;
-        for (const char *key :
-             {"client_id", "redirect_uri", "response_type", "scope", "acr_values"}) {
+        for (const char *key : {"client_id", "redirect_uri", "response_type",
+                                "scope", "acr_values"}) {
           std::regex field(std::string("[\\\"']?") + key +
                            "[\\\"']?\\s*:\\s*[\\\"']([^\\\"']+)[\\\"']");
           std::smatch match;
@@ -160,7 +165,6 @@ Json parseOidcConfig(const std::string &script) {
   }
   throw std::runtime_error("School configuration JSON is incomplete");
 }
-
 
 } // namespace
 
@@ -209,13 +213,20 @@ std::string AndroidHttp::webLogin(const std::string &url) const {
   JNIEnv *env = static_cast<JNIEnv *>(SDL_AndroidGetJNIEnv());
   jobject activity = static_cast<jobject>(SDL_AndroidGetActivity());
   jclass clazz = env->GetObjectClass(activity);
-  jmethodID call = env->GetMethodID(clazz, "webLogin", "(Ljava/lang/String;)Ljava/lang/String;");
-  if (!call) throw std::runtime_error("Web login bridge unavailable");
+  jmethodID call = env->GetMethodID(clazz, "webLogin",
+                                    "(Ljava/lang/String;)Ljava/lang/String;");
+  if (!call)
+    throw std::runtime_error("Web login bridge unavailable");
   jstring input = env->NewStringUTF(url.c_str());
-  auto result = static_cast<jstring>(env->CallObjectMethod(activity, call, input));
+  auto result =
+      static_cast<jstring>(env->CallObjectMethod(activity, call, input));
   std::string callback = fromJString(env, result);
-  env->DeleteLocalRef(input); if (result) env->DeleteLocalRef(result); env->DeleteLocalRef(clazz);
-  if (callback.empty()) throw std::runtime_error("Web login was cancelled");
+  env->DeleteLocalRef(input);
+  if (result)
+    env->DeleteLocalRef(result);
+  env->DeleteLocalRef(clazz);
+  if (callback.empty())
+    throw std::runtime_error("Web login was cancelled");
   return callback;
 }
 
@@ -243,7 +254,6 @@ std::string Client::normalizeSchool(std::string value) {
   return value;
 }
 
-
 HttpResponse Client::get(const std::string &url, const Json &extra) {
   Json headers = extra;
   headers["Accept"] = "application/json";
@@ -256,14 +266,14 @@ HttpResponse Client::get(const std::string &url, const Json &extra) {
   if (response.status >= 400) {
     std::string detail = response.body;
     detail.erase(std::remove(detail.begin(), detail.end(), '\n'), detail.end());
-    if (detail.size() > 160) detail.resize(160);
+    if (detail.size() > 160)
+      detail.resize(160);
     throw std::runtime_error("GET " + url + " HTTP " +
                              std::to_string(response.status) +
                              (detail.empty() ? "" : ": " + detail));
   }
   return response;
 }
-
 
 void Client::login() {
   const std::string accounts = "https://accounts.magister.net";
@@ -363,61 +373,96 @@ Json Client::appointments(const std::string &from, const std::string &to) {
 }
 Json Client::grades() {
   auto enrollments = items(api("leerlingen/" + personId() + "/aanmeldingen/"));
-  if (enrollments.empty()) throw std::runtime_error("No active school enrollment found.");
+  if (enrollments.empty())
+    throw std::runtime_error("No active school enrollment found.");
   const Json *selected = &enrollments[0];
   for (const auto &enrollment : enrollments)
-    if (enrollment.value("isHoofdAanmelding", false)) { selected = &enrollment; break; }
+    if (enrollment.value("isHoofdAanmelding", false)) {
+      selected = &enrollment;
+      break;
+    }
   auto enrollmentId = stringValue(*selected, "id", "Id");
-  auto rows = items(api("personen/" + personId() + "/aanmeldingen/" + enrollmentId + "/cijfers/cijferoverzichtvooraanmelding",
-      {{"actievePerioden", "false"}, {"alleenBerekendeKolommen", "false"}, {"alleenPTAKolommen", "false"}, {"peildatum", stringValue(*selected, "einde", "Einde")}}));
+  auto rows =
+      items(api("personen/" + personId() + "/aanmeldingen/" + enrollmentId +
+                    "/cijfers/cijferoverzichtvooraanmelding",
+                {{"actievePerioden", "false"},
+                 {"alleenBerekendeKolommen", "false"},
+                 {"alleenPTAKolommen", "false"},
+                 {"peildatum", stringValue(*selected, "einde", "Einde")}}));
   Json result = Json::array();
   for (auto &row : rows) {
-    if (row.contains("CijferKolom") && row["CijferKolom"].value("KolomSoort", 1) != 1) continue;
-    if (stringValue(row, "CijferStr", "Waarde").empty()) continue;
+    if (row.contains("CijferKolom") &&
+        row["CijferKolom"].value("KolomSoort", 1) != 1)
+      continue;
+    if (stringValue(row, "CijferStr", "Waarde").empty())
+      continue;
     row["_EnrollmentId"] = enrollmentId;
     result.push_back(std::move(row));
   }
-  std::stable_sort(result.begin(), result.end(), [](const Json &a, const Json &b) { return stringValue(a, "DatumIngevoerd", "ingevoerdOp") > stringValue(b, "DatumIngevoerd", "ingevoerdOp"); });
+  std::stable_sort(result.begin(), result.end(),
+                   [](const Json &a, const Json &b) {
+                     return stringValue(a, "DatumIngevoerd", "ingevoerdOp") >
+                            stringValue(b, "DatumIngevoerd", "ingevoerdOp");
+                   });
   // Fetch full test names for the most recent screenfuls. Older grades are
   // enriched when opened, keeping the initial request bounded.
   for (size_t i = 0; i < std::min<size_t>(12, result.size()); ++i) {
-    try { result[i] = details("grades", result[i]); }
-    catch (const std::exception &) { /* The overview remains usable; tap retries. */ }
+    try {
+      result[i] = details("grades", result[i]);
+    } catch (const std::exception
+                 &) { /* The overview remains usable; tap retries. */
+    }
   }
   return result;
 }
 Json Client::details(const std::string &kind, const Json &row) {
   Json result = row;
   if (kind == "grades") {
-    if (row.contains("Toetsinformatie")) return result;
-    if (!row.contains("CijferKolom")) return result;
+    if (row.contains("Toetsinformatie"))
+      return result;
+    if (!row.contains("CijferKolom"))
+      return result;
     auto id = stringValue(row["CijferKolom"], "Id", "id");
     auto enrollment = stringValue(row, "_EnrollmentId");
-    if (id.empty() || enrollment.empty()) return result;
-    auto info = api("personen/" + personId() + "/aanmeldingen/" + enrollment + "/cijfers/extracijferkolominfo/" + id);
+    if (id.empty() || enrollment.empty())
+      return result;
+    auto info = api("personen/" + personId() + "/aanmeldingen/" + enrollment +
+                    "/cijfers/extracijferkolominfo/" + id);
     result["Toetsinformatie"] = info;
     return result;
   }
-  if (kind == "books") return result;
+  if (kind == "books")
+    return result;
   std::string path;
   if (row.contains("Links") && row["Links"].is_array())
     for (const auto &link : row["Links"]) {
       auto rel = stringValue(link, "Rel", "rel");
-      if (rel == "Self" || rel == "self") { path = stringValue(link, "Href", "href"); break; }
+      if (rel == "Self" || rel == "self") {
+        path = stringValue(link, "Href", "href");
+        break;
+      }
     }
   const std::string prefix = "https://" + schoolServer_ + "/api/";
-  if (path.starts_with(prefix)) path.erase(0, prefix.size());
-  if (path.starts_with("/api/")) path.erase(0, 5);
-  if (path.starts_with("api/")) path.erase(0, 4);
+  if (path.starts_with(prefix))
+    path.erase(0, prefix.size());
+  if (path.starts_with("/api/"))
+    path.erase(0, 5);
+  if (path.starts_with("api/"))
+    path.erase(0, 4);
   auto id = stringValue(row, "Id", "id");
   if (path.empty() && !id.empty()) {
-    if (kind == "schedule") path = "personen/" + personId() + "/afspraken/" + id;
-    if (kind == "assignments") path = "personen/" + personId() + "/opdrachten/" + id;
-    if (kind == "messages") path = "berichten/berichten/" + id;
+    if (kind == "schedule")
+      path = "personen/" + personId() + "/afspraken/" + id;
+    if (kind == "assignments")
+      path = "personen/" + personId() + "/opdrachten/" + id;
+    if (kind == "messages")
+      path = "berichten/berichten/" + id;
   }
-  if (!path.empty() && path.find(':') == std::string::npos && path.find("..") == std::string::npos && !path.starts_with('/')) {
+  if (!path.empty() && path.find(':') == std::string::npos &&
+      path.find("..") == std::string::npos && !path.starts_with('/')) {
     auto info = api(path);
-    if (info.is_object()) result.update(info);
+    if (info.is_object())
+      result.update(info);
   }
   return result;
 }
@@ -434,23 +479,32 @@ Json Client::books() {
 }
 std::string Client::bookUrl(const Json &book) {
   if (!book.contains("Links") || !book["Links"].is_array())
-    throw std::runtime_error("This book has no digital access through Magister.");
+    throw std::runtime_error(
+        "This book has no digital access through Magister.");
   for (const auto &link : book["Links"]) {
-    if (stringValue(link, "Rel", "rel") != "content") continue;
+    if (stringValue(link, "Rel", "rel") != "content")
+      continue;
     std::string path = stringValue(link, "Href", "href");
     const std::string prefix = "https://" + schoolServer_ + "/api/";
-    if (path.starts_with(prefix)) path.erase(0, prefix.size());
-    else if (path.starts_with("/api/")) path.erase(0, 5);
-    else if (path.starts_with("api/")) path.erase(0, 4);
-    if (path.empty() || path.starts_with('/') || path.find(":") != std::string::npos || path.find("..") != std::string::npos)
+    if (path.starts_with(prefix))
+      path.erase(0, prefix.size());
+    else if (path.starts_with("/api/"))
+      path.erase(0, 5);
+    else if (path.starts_with("api/"))
+      path.erase(0, 4);
+    if (path.empty() || path.starts_with('/') ||
+        path.find(":") != std::string::npos ||
+        path.find("..") != std::string::npos)
       throw std::runtime_error("Invalid textbook access link.");
     auto response = api(path, {{"redirect_type", "body"}});
     std::string url = stringValue(response, "location", "Location");
     if (!url.starts_with("https://"))
-      throw std::runtime_error("The publisher did not return a valid digital access link.");
+      throw std::runtime_error(
+          "The publisher did not return a valid digital access link.");
     return url;
   }
-  throw std::runtime_error("This is a physical textbook; no digital book is linked.");
+  throw std::runtime_error(
+      "This is a physical textbook; no digital book is linked.");
 }
 Json Client::messages() {
   Json folders = items(api("berichten/mappen"));

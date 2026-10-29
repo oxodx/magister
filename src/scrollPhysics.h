@@ -17,17 +17,19 @@ struct ScrollPhysics {
       const float decay = std::exp(-7.0f * std::clamp(dt, 0.0f, 0.05f));
       movement += velocity * (1.0f - decay) / 7.0f;
       velocity *= decay;
-      if (std::abs(velocity) < 1) velocity = 0;
+      if (std::abs(velocity) < 1)
+        velocity = 0;
     }
     offset = std::clamp(offset - movement, 0.0f, std::max(0.0f, maximum));
-    if ((offset <= 0 && velocity > 0) ||
-        (offset >= maximum && velocity < 0)) velocity = 0;
+    if ((offset <= 0 && velocity > 0) || (offset >= maximum && velocity < 0))
+      velocity = 0;
     return offset;
   }
 };
 
 inline float smoothFlingVelocity(float previous, float sample, float seconds) {
-  const float blend = 1.0f - std::exp(-20.0f * std::clamp(seconds, 0.001f, 0.1f));
+  const float blend =
+      1.0f - std::exp(-20.0f * std::clamp(seconds, 0.001f, 0.1f));
   return previous + blend * (sample - previous);
 }
 } // namespace magister

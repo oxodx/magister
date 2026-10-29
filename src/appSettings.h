@@ -5,8 +5,9 @@
 
 namespace magister {
 
-// UI preferences intentionally stay small and explicit. They are session-scoped;
-// account and authentication data remain owned by the Magister client.
+// UI preferences intentionally stay small and explicit. They are
+// session-scoped; account and authentication data remain owned by the Magister
+// client.
 struct AppSettings {
   bool compactSchedule = false;
   bool showHomeworkBadges = true;
@@ -16,7 +17,8 @@ struct AppSettings {
 inline AppSettings loadSettings(const std::string &path) {
   AppSettings value;
   std::ifstream input(path);
-  input >> value.compactSchedule >> value.showHomeworkBadges >> value.reduceMotion;
+  input >> value.compactSchedule >> value.showHomeworkBadges >>
+      value.reduceMotion;
   return value;
 }
 

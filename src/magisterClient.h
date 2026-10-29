@@ -7,7 +7,6 @@
 #include <unordered_map>
 
 namespace magister {
-
 using Json = nlohmann::json;
 
 struct HttpResponse {

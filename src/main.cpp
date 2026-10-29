@@ -1,11 +1,10 @@
+#include "app_settings.h"
 #include "imgui.h"
 #include "imgui_impl_opengl3.h"
 #include "imgui_impl_sdl2.h"
 #include "magister_client.h"
-#include "app_settings.h"
 #include "schedule_gesture.h"
 #include "scroll_physics.h"
-
 #include <GLES3/gl3.h>
 #include <SDL.h>
 #include <SDL_system.h>
@@ -297,7 +296,8 @@ int main(int, char **) {
   ImGuiIO &io = ImGui::GetIO();
   io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
   iniPath = std::string(SDL_AndroidGetInternalStoragePath()) + "/imgui.ini";
-  settingsPath = std::string(SDL_AndroidGetInternalStoragePath()) + "/settings.txt";
+  settingsPath =
+      std::string(SDL_AndroidGetInternalStoragePath()) + "/settings.txt";
   settings = magister::loadSettings(settingsPath);
   io.IniFilename = iniPath.c_str();
   int screenWidth = 0, screenHeight = 0;

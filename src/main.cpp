@@ -1,10 +1,10 @@
-#include "app_settings.h"
+#include "appSettings.h"
 #include "imgui.h"
 #include "imgui_impl_opengl3.h"
 #include "imgui_impl_sdl2.h"
-#include "magister_client.h"
-#include "schedule_gesture.h"
-#include "scroll_physics.h"
+#include "magisterClient.h"
+#include "scheduleGesture.h"
+#include "scrollPhysics.h"
 #include <GLES3/gl3.h>
 #include <SDL.h>
 #include <SDL_system.h>
@@ -257,7 +257,7 @@ void openDetails(Page page, magister::Json row) {
   });
 }
 
-#include "mobile_ui.h"
+#include "mobileUi.h"
 } // namespace
 
 int main(int, char **) {

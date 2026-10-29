@@ -402,8 +402,8 @@ void weekPicker() {
   }
   ImGui::PopStyleVar();
 }
-#include "ui_more_page.h"
-#include "ui_settings_page.h"
+#include "uiMorePage.h"
+#include "uiSettingsPage.h"
 void mobileUi() {
   bool logged, busy, detailOpen;
   Page page;

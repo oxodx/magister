@@ -1,4 +1,4 @@
-#include "magister_client.h"
+#include "magisterClient.h"
 
 #include <SDL_system.h>
 #include <algorithm>

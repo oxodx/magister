@@ -1,5 +1,6 @@
-#include "scroll_physics.h"
-#include "schedule_gesture.h"
+#include "scrollPhysics.h"
+#include "scheduleGesture.h"
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
 

@@ -27,7 +27,7 @@ set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(sdl imgui nlohmann_json)
 
 add_library(magister SHARED
-  src/main.cpp src/magister_client.cpp
+  src/main.cpp src/magisterClient.cpp
   ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.cpp
   ${imgui_SOURCE_DIR}/imgui_tables.cpp ${imgui_SOURCE_DIR}/imgui_widgets.cpp
   ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl2.cpp

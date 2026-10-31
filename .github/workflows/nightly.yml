@@ -107,5 +107,4 @@ jobs:
           gh release create nightly dist/*.apk \
             --title "Nightly ${{ steps.meta.outputs.date }}" \
             --notes "Automated build of ${{ github.sha }}. Signed with the repository release key when configured; otherwise this is a debug build." \
-            --prerelease \
             --target "$GITHUB_SHA"

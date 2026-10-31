@@ -16,7 +16,7 @@ std::string loadSchool();
 std::string loadSessionToken();
 void saveSession(const std::string &school, const std::string &accessToken);
 void clearSession();
-void showKeyboard();
+void showKeyboard(const std::string &text);
 void hideKeyboard();
 void finish();
 void addText(unsigned int codepoint);

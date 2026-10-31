@@ -3,17 +3,25 @@ package org.magister.nativeapp;
 import android.app.Dialog;
 import android.app.NativeActivity;
 import android.content.Intent;
+import android.content.Context;
 import android.graphics.Color;
 import android.net.Uri;
+import android.os.Bundle;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
 import android.util.Base64;
 import android.view.KeyEvent;
+import android.view.Gravity;
 import android.view.ViewGroup;
+import android.view.inputmethod.InputMethodManager;
 import android.webkit.CookieManager;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.text.Editable;
+import android.text.TextWatcher;
+import android.widget.EditText;
+import android.widget.FrameLayout;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
 import java.util.HashMap;
@@ -29,6 +37,75 @@ public final class MainActivity extends NativeActivity {
   private static final String SCHOOL_KEY = "school";
   private static final String TOKEN_KEY = "access_token";
   private static final String KEY_ALIAS = "magister_session_key";
+  private EditText keyboardEditor;
+  private boolean synchronizingEditor;
+  private String previousEditorText = "";
+
+  @Override
+  protected void onCreate(Bundle savedInstanceState) {
+    super.onCreate(savedInstanceState);
+    keyboardEditor = new EditText(this);
+    keyboardEditor.setSingleLine(true);
+    keyboardEditor.setTextColor(Color.TRANSPARENT);
+    keyboardEditor.setHintTextColor(Color.TRANSPARENT);
+    keyboardEditor.setBackgroundColor(Color.TRANSPARENT);
+    keyboardEditor.setCursorVisible(false);
+    keyboardEditor.addTextChangedListener(new TextWatcher() {
+      @Override public void beforeTextChanged(CharSequence text, int start, int count, int after) {}
+      @Override public void onTextChanged(CharSequence text, int start, int before, int count) {}
+
+      @Override public void afterTextChanged(Editable editable) {
+        if (synchronizingEditor) return;
+        String current = editable.toString();
+        int prefix = 0;
+        int shared = Math.min(previousEditorText.length(), current.length());
+        while (prefix < shared
+            && previousEditorText.charAt(prefix) == current.charAt(prefix)) prefix++;
+        int oldEnd = previousEditorText.length();
+        int newEnd = current.length();
+        while (oldEnd > prefix && newEnd > prefix
+            && previousEditorText.charAt(oldEnd - 1) == current.charAt(newEnd - 1)) {
+          oldEnd--;
+          newEnd--;
+        }
+        int removed = previousEditorText.codePointCount(prefix, oldEnd);
+        for (int index = 0; index < removed; index++) nativeBackspace();
+        for (int index = prefix; index < newEnd;) {
+          int codepoint = current.codePointAt(index);
+          nativeText(codepoint);
+          index += Character.charCount(codepoint);
+        }
+        previousEditorText = current;
+      }
+    });
+    FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(1, 1);
+    params.gravity = Gravity.BOTTOM | Gravity.END;
+    addContentView(keyboardEditor, params);
+  }
+
+  /** Give Android's IME a real editor while ImGui retains visual ownership. */
+  public void showKeyboard(String text) {
+    runOnUiThread(() -> {
+      synchronizingEditor = true;
+      keyboardEditor.setText(text);
+      previousEditorText = text;
+      keyboardEditor.setSelection(text.length());
+      synchronizingEditor = false;
+      keyboardEditor.requestFocus();
+      InputMethodManager input =
+          (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+      input.showSoftInput(keyboardEditor, InputMethodManager.SHOW_IMPLICIT);
+    });
+  }
+
+  public void hideKeyboard() {
+    runOnUiThread(() -> {
+      InputMethodManager input =
+          (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+      input.hideSoftInputFromWindow(keyboardEditor.getWindowToken(), 0);
+      keyboardEditor.clearFocus();
+    });
+  }
 
   /** Official web login; returns the configured OIDC callback URL. */
   public String webLogin(String startUrl) {
@@ -170,4 +247,5 @@ public final class MainActivity extends NativeActivity {
   }
 
   private native void nativeText(int codepoint);
+  private native void nativeBackspace();
 }

@@ -452,7 +452,10 @@ void mobileUi() {
     ImGui::SetNextItemWidth(-1);
     ImGui::InputTextWithHint("##school", "Your school, for example svol",
                              state.school.data(), state.school.size());
-    requestKeyboard |= ImGui::IsItemActivated();
+    if (ImGui::IsItemActivated()) {
+      keyboardText = state.school.data();
+      requestKeyboard = true;
+    }
     gap(6);
     ImGui::BeginDisabled(busy);
     if (action(busy ? "Please wait..." : "Continue with my school", true,
@@ -533,7 +536,10 @@ void mobileUi() {
         if (ImGui::InputTextWithHint("##search", "Search by subject or title",
                                      searchText.data(), searchText.size()))
           resetFeedScroll = true;
-        requestKeyboard |= ImGui::IsItemActivated();
+        if (ImGui::IsItemActivated()) {
+          keyboardText = searchText.data();
+          requestKeyboard = true;
+        }
         gap(4);
       } else {
         const char *subtitles[] = {"",

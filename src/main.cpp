@@ -43,6 +43,7 @@ std::vector<double> scrollFrameTimes;
 std::string iniPath;
 std::string settingsPath;
 bool requestKeyboard = false;
+std::string keyboardText;
 int agendaDay = 0;
 int requestedDayChange = 0;
 bool sessionRestoreStarted = false;
@@ -567,15 +568,21 @@ void renderFrame() {
   const std::int64_t frameStart = platform::monotonicMillis();
   ImGui_ImplOpenGL3_NewFrame();
   ImGui_ImplAndroid_NewFrame();
-  for (unsigned int codepoint : platform::takeText())
-    ImGui::GetIO().AddInputCharacter(codepoint);
+  for (unsigned int codepoint : platform::takeText()) {
+    if (codepoint == 8) {
+      ImGui::GetIO().AddKeyEvent(ImGuiKey_Backspace, true);
+      ImGui::GetIO().AddKeyEvent(ImGuiKey_Backspace, false);
+    } else {
+      ImGui::GetIO().AddInputCharacter(codepoint);
+    }
+  }
   ImGui::NewFrame();
   if (settings.reduceMotion && !touchScroll.down)
     touchScroll.velocity = 0;
   mobileUi();
   ImGui::Render();
   if (requestKeyboard) {
-    platform::showKeyboard();
+    platform::showKeyboard(keyboardText);
     keyboardVisible = true;
     requestKeyboard = false;
   }

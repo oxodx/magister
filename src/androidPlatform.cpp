@@ -183,15 +183,37 @@ void clearSession() {
   env->DeleteLocalRef(activityClass);
 }
 
-void showKeyboard() {
+void showKeyboard(const std::string &text) {
   android_app *state = app();
-  ANativeActivity_showSoftInput(state->activity,
-                                ANATIVEACTIVITY_SHOW_SOFT_INPUT_IMPLICIT);
+  ScopedEnv env(state);
+  jobject activity = state->activity->clazz;
+  jclass activityClass = env->GetObjectClass(activity);
+  jmethodID method =
+      env->GetMethodID(activityClass, "showKeyboard", "(Ljava/lang/String;)V");
+  if (!method) {
+    checkException(env.get(), "Keyboard bridge is unavailable");
+    throw std::runtime_error("Keyboard bridge is unavailable");
+  }
+  jstring value = env->NewStringUTF(text.c_str());
+  env->CallVoidMethod(activity, method, value);
+  checkException(env.get(), "Unable to show the keyboard");
+  env->DeleteLocalRef(value);
+  env->DeleteLocalRef(activityClass);
 }
 
 void hideKeyboard() {
   android_app *state = app();
-  ANativeActivity_hideSoftInput(state->activity, 0);
+  ScopedEnv env(state);
+  jobject activity = state->activity->clazz;
+  jclass activityClass = env->GetObjectClass(activity);
+  jmethodID method = env->GetMethodID(activityClass, "hideKeyboard", "()V");
+  if (!method) {
+    checkException(env.get(), "Keyboard bridge is unavailable");
+    throw std::runtime_error("Keyboard bridge is unavailable");
+  }
+  env->CallVoidMethod(activity, method);
+  checkException(env.get(), "Unable to hide the keyboard");
+  env->DeleteLocalRef(activityClass);
 }
 
 void finish() {
@@ -229,4 +251,9 @@ Java_org_magister_nativeapp_MainActivity_nativeText(JNIEnv *, jobject,
                                                     jint codepoint) {
   if (codepoint >= 0x20 && codepoint != 0x7F)
     platform::addText(static_cast<unsigned int>(codepoint));
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_org_magister_nativeapp_MainActivity_nativeBackspace(JNIEnv *, jobject) {
+  platform::addText(8);
 }

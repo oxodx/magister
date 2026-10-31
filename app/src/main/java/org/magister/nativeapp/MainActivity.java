@@ -35,6 +35,10 @@ import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 
 public final class MainActivity extends NativeActivity {
+  static {
+    System.loadLibrary("magister");
+  }
+
   private static final String SESSION_PREFS = "session";
   private static final String SCHOOL_KEY = "school";
   private static final String TOKEN_KEY = "access_token";

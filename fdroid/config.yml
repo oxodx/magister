@@ -1,0 +1,11 @@
+---
+sdk_path: {env: ANDROID_HOME}
+repo_url: https://oxodx.github.io/magister/fdroid/repo
+repo_name: Magister Native
+repo_description: >-
+  Official nightly builds of Magister Native for Android.
+archive_older: 0
+keystore: {env: FDROID_REPO_KEYSTORE}
+keystorepass: {env: FDROID_REPO_KEYSTORE_PASSWORD}
+repo_keyalias: {env: FDROID_REPO_KEY_ALIAS}
+keypass: {env: FDROID_REPO_KEY_PASSWORD}

@@ -56,13 +56,25 @@ ignored by Git.
 
 The `Nightly release` workflow runs daily at 03:00 UTC and can be started
 manually. It builds both ABIs, runs the native checks, and publishes the APK as a
-prerelease under the rolling `nightly` tag with a date and commit in the filename.
+release under the rolling `nightly` tag with a date and commit in the filename.
 The version code and name are derived from the build date and commit.
 
 To sign nightly APKs with a release key, add these repository secrets:
 `ANDROID_KEYSTORE_BASE64` (base64-encoded keystore), `ANDROID_KEYSTORE_PASSWORD`,
 `ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD`. Without them the workflow falls
 back to a debug-signed APK.
+
+Signed builds are also turned into a signed F-Droid repository and deployed with
+GitHub Pages. After enabling Pages with **GitHub Actions** as its source in the
+repository settings, add this URL to an F-Droid-compatible client:
+
+```text
+https://oxodx.github.io/magister/fdroid/repo
+```
+
+The F-Droid index uses the configured Android release keystore, so its identity
+remains stable across nightly runs. Debug builds are intentionally not published
+to the F-Droid repository because their runner-generated signing key is temporary.
 
 ## Interface and data
 

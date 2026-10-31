@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 concurrency:
   group: nightly-release
@@ -17,6 +19,9 @@ jobs:
     name: Build nightly APK
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    environment:
+      name: github-pages
+      url: ${{ steps.pages.outputs.page_url }}
 
     steps:
       - name: Checkout
@@ -106,5 +111,43 @@ jobs:
           gh release delete nightly --yes --cleanup-tag || true
           gh release create nightly dist/*.apk \
             --title "Nightly ${{ steps.meta.outputs.date }}" \
-            --notes "Automated build of ${{ github.sha }}. Signed with the repository release key when configured; otherwise this is a debug build." \
+            --notes "Automated build of ${{ github.sha }}. Signed with the repository release key when configured; otherwise this is a debug build. Signed builds are also published at https://oxodx.github.io/magister/fdroid/repo for F-Droid clients." \
             --target "$GITHUB_SHA"
+
+      - name: Install F-Droid repository tools
+        if: steps.signing.outputs.signed == 'true'
+        run: |
+          python3 -m venv "$RUNNER_TEMP/fdroid-tools"
+          "$RUNNER_TEMP/fdroid-tools/bin/pip" install --disable-pip-version-check fdroidserver==2.4.5
+          echo "FDROID=$RUNNER_TEMP/fdroid-tools/bin/fdroid" >> "$GITHUB_ENV"
+
+      - name: Build signed F-Droid repository
+        if: steps.signing.outputs.signed == 'true'
+        env:
+          FDROID_REPO_KEYSTORE: ${{ runner.temp }}/release.keystore
+          FDROID_REPO_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          FDROID_REPO_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          FDROID_REPO_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          mkdir -p fdroid/repo _site/fdroid
+          cp dist/*.apk "fdroid/repo/org.magister.nativeapp_${{ steps.meta.outputs.version_code }}.apk"
+          cd fdroid
+          "$FDROID" update --pretty
+          cd ..
+          cp -a fdroid/repo _site/fdroid/repo
+          cp fdroid/index.html _site/index.html
+
+      - name: Configure GitHub Pages
+        if: steps.signing.outputs.signed == 'true'
+        uses: actions/configure-pages@v6
+
+      - name: Upload F-Droid repository
+        if: steps.signing.outputs.signed == 'true'
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+
+      - name: Deploy F-Droid repository
+        if: steps.signing.outputs.signed == 'true'
+        id: pages
+        uses: actions/deploy-pages@v5

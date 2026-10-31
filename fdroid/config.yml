@@ -3,7 +3,7 @@ sdk_path: $ANDROID_HOME
 repo_url: https://oxodx.github.io/magister/fdroid/repo
 repo_name: Magister Native
 repo_description: >-
-  Official nightly builds of Magister Native for Android.
+  Automatic builds of every Magister Native commit to the main branch.
 archive_older: 0
 keystore: $FDROID_REPO_KEYSTORE
 keystorepass: {env: FDROID_REPO_KEYSTORE_PASSWORD}

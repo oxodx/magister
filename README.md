@@ -52,14 +52,14 @@ This builds shared libraries. Gradle is needed only for Android adapters and APK
 packaging/signing. Generated outputs, machine-specific settings and caches are
 ignored by Git.
 
-## Nightly releases
+## Commit releases
 
-The `Nightly release` workflow runs daily at 03:00 UTC and can be started
-manually. It builds both ABIs, runs the native checks, and publishes the APK as a
-release under the rolling `nightly` tag with a date and commit in the filename.
-The version code and name are derived from the build date and commit.
+The `Commit release` workflow runs for every push to `main` and can also be
+started manually. It builds both ABIs and publishes a separate GitHub release
+for every run. Each APK uses a monotonically increasing version code so F-Droid
+recognizes every commit as a new version.
 
-To sign nightly APKs with a release key, add these repository secrets:
+To sign commit APKs with a release key, add these repository secrets:
 `ANDROID_KEYSTORE_BASE64` (base64-encoded keystore), `ANDROID_KEYSTORE_PASSWORD`,
 `ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD`. Without them the workflow falls
 back to a debug-signed APK.
@@ -73,7 +73,7 @@ https://oxodx.github.io/magister/fdroid/repo
 ```
 
 The F-Droid index uses the configured Android release keystore, so its identity
-remains stable across nightly runs. Debug builds are intentionally not published
+remains stable across commit builds. Debug builds are intentionally not published
 to the F-Droid repository because their runner-generated signing key is temporary.
 
 ## Interface and data

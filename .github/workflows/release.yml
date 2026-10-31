@@ -1,8 +1,9 @@
-name: Nightly release
+name: Commit release
 
 on:
-  schedule:
-    - cron: '0 3 * * *'
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -10,13 +11,9 @@ permissions:
   pages: write
   id-token: write
 
-concurrency:
-  group: nightly-release
-  cancel-in-progress: true
-
 jobs:
-  nightly:
-    name: Build nightly APK
+  release:
+    name: Build commit APK
     runs-on: ubuntu-latest
     timeout-minutes: 60
     environment:
@@ -48,17 +45,16 @@ jobs:
             ~/.gradle/caches
             ~/.gradle/wrapper
             build/downloads
-          key: nightly-${{ runner.os }}-${{ hashFiles('**/*.gradle', 'gradle/wrapper/gradle-wrapper.properties', 'CMakeLists.txt') }}
+          key: release-${{ runner.os }}-${{ hashFiles('**/*.gradle', 'gradle/wrapper/gradle-wrapper.properties', 'CMakeLists.txt') }}
           restore-keys: |
-            nightly-${{ runner.os }}-
+            release-${{ runner.os }}-
 
       - name: Read build metadata
         id: meta
         run: |
-          echo "date=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
           echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
-          echo "version_code=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
-          echo "version_name=1.0.0-nightly.$(date -u +%Y%m%d).$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          echo "version_code=$((1000000000 + GITHUB_RUN_NUMBER))" >> "$GITHUB_OUTPUT"
+          echo "version_name=1.0.0+$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Prepare signing key
         id: signing
@@ -97,16 +93,15 @@ jobs:
           else
             apk=app/build/outputs/apk/debug/app-debug.apk
           fi
-          cp "$apk" "dist/magister-nightly-${{ steps.meta.outputs.date }}-${{ steps.meta.outputs.sha }}.apk"
+          cp "$apk" "dist/magister-${{ steps.meta.outputs.sha }}.apk"
 
-      - name: Publish nightly release
+      - name: Publish commit release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete nightly --yes --cleanup-tag || true
-          gh release create nightly dist/*.apk \
-            --title "Nightly ${{ steps.meta.outputs.date }}" \
-            --notes "Automated build of ${{ github.sha }}. Signed with the repository release key when configured; otherwise this is a debug build. Signed builds are also published at https://oxodx.github.io/magister/fdroid/repo for F-Droid clients." \
+          gh release create "build-${{ steps.meta.outputs.version_code }}" dist/*.apk \
+            --title "Build ${{ steps.meta.outputs.sha }}" \
+            --notes "Automated build of commit ${{ github.sha }}. Signed with the repository release key when configured; otherwise this is a debug build. Signed builds are also published at https://oxodx.github.io/magister/fdroid/repo for F-Droid clients." \
             --target "$GITHUB_SHA"
 
       - name: Install F-Droid repository tools

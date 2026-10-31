@@ -2,7 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
     <application android:theme="@style/AppTheme" android:label="Magister" android:allowBackup="false" android:usesCleartextTraffic="false" android:hardwareAccelerated="true">
-        <activity android:name=".MainActivity" android:screenOrientation="portrait" android:launchMode="singleTask" android:configChanges="layoutDirection|locale|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation" android:exported="true">
+        <activity android:name=".MainActivity" android:screenOrientation="portrait" android:launchMode="singleTask" android:windowSoftInputMode="adjustResize" android:configChanges="layoutDirection|locale|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation" android:exported="true">
+            <meta-data android:name="android.app.lib_name" android:value="magister" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

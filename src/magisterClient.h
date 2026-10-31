@@ -17,9 +17,9 @@ struct HttpResponse {
   std::string error;
 };
 
-class AndroidHttp {
+class HttpClient {
 public:
-  AndroidHttp() = default;
+  HttpClient() = default;
   HttpResponse request(const std::string &method, const std::string &url,
                        const std::string &body = {},
                        const Json &headers = Json::object()) const;
@@ -28,9 +28,11 @@ public:
 
 class Client {
 public:
-  Client(AndroidHttp http, std::string school);
+  Client(HttpClient http, std::string school);
 
   void login();
+  void restoreSession(std::string accessToken);
+  const std::string &accessToken() const;
   Json appointments(const std::string &from, const std::string &to);
   Json grades();
   Json assignments(const std::string &from, const std::string &to);
@@ -50,7 +52,7 @@ private:
   Json items(const Json &response) const;
   std::string personId();
 
-  AndroidHttp http_;
+  HttpClient http_;
   std::string school_;
   std::string schoolServer_;
   std::string accessToken_;

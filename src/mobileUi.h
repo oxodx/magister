@@ -362,7 +362,7 @@ void switchPage(Page page) {
   settingsScreen = false;
   searchVisible = false;
   searchText.fill(0);
-  SDL_StopTextInput();
+  platform::hideKeyboard();
   load(page);
 }
 void weekPicker() {
@@ -457,7 +457,7 @@ void mobileUi() {
     ImGui::BeginDisabled(busy);
     if (action(busy ? "Please wait..." : "Continue with my school", true,
                ImGui::GetContentRegionAvail().x / uiScale, 48)) {
-      SDL_StopTextInput();
+      platform::hideKeyboard();
       login();
     }
     ImGui::EndDisabled();
@@ -504,7 +504,7 @@ void mobileUi() {
                                      false, 0, {dp(180), dp(38)})) {
           searchVisible = !searchVisible;
           searchText.fill(0);
-          SDL_StopTextInput();
+          platform::hideKeyboard();
           ImGui::CloseCurrentPopup();
         }
         ImGui::EndDisabled();
@@ -624,7 +624,7 @@ void mobileUi() {
             std::lock_guard lock(state.mutex);
             state.detailOpen = false;
           }
-          SDL_StopTextInput();
+          platform::hideKeyboard();
           resetFeedScroll = true;
           touchScroll.reset();
         } else {

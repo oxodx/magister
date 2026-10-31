@@ -1,6 +1,6 @@
 # Magister Native
 
-An Android school client with a C++20 UI and API layer, CMake, SDL2,
+An Android school client with a C++20 UI and API layer, CMake, native_app_glue,
 Dear ImGui and OpenGL ES 3. There is no Python runtime or vendor directory.
 
 ## Layout
@@ -15,9 +15,10 @@ gradle/                Reproducible Gradle wrapper
 tests/                 Standalone C++ scroll-physics checks
 ```
 
-The SDL Java activity/keyboard runtime is required for SDL's Android integration.
-Those adapter sources retain the Samsung keyboard fixes. The small MainActivity
-adapter provides WebView login and Android HTTPS. Application logic remains C++.
+A single MainActivity extends Android's NativeActivity and only bridges the
+official WebView login, external browser intents and IME character delivery.
+Rendering, input, networking and cookies stay in C++. The Android platform layer
+uses native_app_glue, EGL and the ImGui Android backend.
 
 ## Build an APK
 
@@ -32,8 +33,10 @@ Output: `app/build/outputs/apk/debug/app-debug.apk`.
 Both ARM64 and ARMv7 are included. Debug builds keep symbols but compile the
 native app with optimization so UI performance is representative on a phone.
 
-CMake FetchContent downloads SDL 2.30.11, Dear ImGui 1.92.5 and nlohmann/json
-3.12.0 from their upstream release archives, verified with pinned SHA-256 hashes.
+CMake FetchContent downloads Dear ImGui 1.92.5, nlohmann/json 3.12.0, mbedTLS
+3.6.2 and curl 8.11.1 from their upstream release archives, verified with pinned
+SHA-256 hashes. HTTPS and persistent cookies are handled by libcurl with mbedTLS
+and the Android system certificate store.
 The first configure requires internet access. Download archives are cached under
 `build/downloads/`; extracted sources and native objects live in generated build
 directories. Dependency license files are included in the fetched source archives.
@@ -105,5 +108,5 @@ and velocity filtering. Scroll gestures log frame count, mean and 95th-percentil
 frame time to Android logcat without logging school content or authentication data:
 
 ```sh
-adb logcat -s SDL
+adb logcat -s Magister
 ```

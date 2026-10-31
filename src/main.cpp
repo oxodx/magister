@@ -1,19 +1,22 @@
+#include "androidPlatform.h"
 #include "appSettings.h"
 #include "imgui.h"
+#include "imgui_impl_android.h"
 #include "imgui_impl_opengl3.h"
-#include "imgui_impl_sdl2.h"
 #include "magisterClient.h"
 #include "scheduleGesture.h"
 #include "scrollPhysics.h"
+#include <EGL/egl.h>
 #include <GLES3/gl3.h>
-#include <SDL.h>
-#include <SDL_system.h>
-#include <SDL_syswm.h>
-#include <algorithm>
+#include <android/input.h>
+#include <android/keycodes.h>
 #include <android/native_window.h>
+#include <android_native_app_glue.h>
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <ctime>
 #include <dlfcn.h>
@@ -26,13 +29,23 @@
 #include <vector>
 
 namespace {
-SDL_Window *window = nullptr;
-SDL_GLContext glContext = nullptr;
+android_app *gApp = nullptr;
+EGLDisplay eglDisplay = EGL_NO_DISPLAY;
+EGLSurface eglSurface = EGL_NO_SURFACE;
+EGLContext eglContext = EGL_NO_CONTEXT;
+bool windowReady = false;
+bool imguiInitialized = false;
+bool imguiBackends = false;
+bool keyboardVisible = false;
+int windowWidth = 0;
+int windowHeight = 0;
+std::vector<double> scrollFrameTimes;
 std::string iniPath;
 std::string settingsPath;
 bool requestKeyboard = false;
 int agendaDay = 0;
 int requestedDayChange = 0;
+bool sessionRestoreStarted = false;
 
 enum class Page { Schedule, Grades, Assignments, Books, Messages, Absences };
 
@@ -47,7 +60,7 @@ struct TouchScroll {
   bool down = false, eligible = false, dragging = false, swiping = false;
   float start = 0, last = 0, startX = 0, lastX = 0;
   float delta = 0, velocity = 0, verticalTravel = 0;
-  Uint32 timestamp = 0;
+  std::int64_t timestamp = 0;
   void reset() {
     delta = velocity = verticalTravel = 0;
     eligible = dragging = swiping = false;
@@ -199,8 +212,10 @@ void login() {
     if (school.empty())
       throw std::runtime_error("School is required");
     auto client =
-        std::make_shared<magister::Client>(magister::AndroidHttp(), school);
+        std::make_shared<magister::Client>(magister::HttpClient(), school);
     client->login();
+    platform::saveSession(magister::Client::normalizeSchool(school),
+                          client->accessToken());
     auto data = client->appointments(dateOffset(day - 3), dateOffset(day + 4));
     std::lock_guard lock(state.mutex);
     state.client = std::move(client);
@@ -216,6 +231,53 @@ void login() {
   });
 }
 
+void restoreSavedSession() {
+  if (sessionRestoreStarted)
+    return;
+  sessionRestoreStarted = true;
+  std::string school = magister::Client::normalizeSchool(platform::loadSchool());
+  if (!school.empty()) {
+    state.school.fill(0);
+    std::copy_n(school.data(),
+                std::min(school.size(), state.school.size() - 1),
+                state.school.data());
+  }
+  std::string token = platform::loadSessionToken();
+  if (school.empty() || token.empty())
+    return;
+  runAsync([school = std::move(school), token = std::move(token),
+            day = agendaDay] {
+    auto client =
+        std::make_shared<magister::Client>(magister::HttpClient(), school);
+    client->restoreSession(token);
+    magister::Json data;
+    try {
+      data = client->appointments(dateOffset(day - 3), dateOffset(day + 4));
+    } catch (const std::exception &error) {
+      const std::string message = error.what();
+      if (message.find("HTTP 401") == std::string::npos &&
+          message.find("Session expired") == std::string::npos)
+        throw;
+      // The official WebView retains Magister's own login cookie. In the
+      // common case this refreshes silently; school SSO may still ask the user.
+      client->login();
+      platform::saveSession(school, client->accessToken());
+      data = client->appointments(dateOffset(day - 3), dateOffset(day + 4));
+    }
+    std::stable_sort(data.begin(), data.end(),
+                     [](const auto &a, const auto &b) {
+                       return value(a, {"Start"}) < value(b, {"Start"});
+                     });
+    std::lock_guard lock(state.mutex);
+    state.client = std::move(client);
+    state.loggedIn = true;
+    state.page = Page::Schedule;
+    state.loadedDay = day;
+    state.rows = std::make_shared<const magister::Json>(std::move(data));
+    state.status = "Signed in";
+  });
+}
+
 void openBook(magister::Json book) {
   runAsync([book = std::move(book)] {
     std::shared_ptr<magister::Client> client;
@@ -226,8 +288,7 @@ void openBook(magister::Json book) {
     if (!client)
       throw std::runtime_error("Sign in again to open your textbook.");
     auto url = client->bookUrl(book);
-    if (SDL_OpenURL(url.c_str()) != 0)
-      throw std::runtime_error("Unable to open the browser.");
+    platform::openUrl(url);
     std::lock_guard lock(state.mutex);
     state.status = "Textbook opened in the browser";
   });
@@ -260,49 +321,98 @@ void openDetails(Page page, magister::Json row) {
 #include "mobileUi.h"
 } // namespace
 
-int main(int, char **) {
-  SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
-  SDL_SetHint(SDL_HINT_IME_SHOW_UI, "1");
-  SDL_SetHint(SDL_HINT_ENABLE_SCREEN_KEYBOARD, "1");
-  SDL_SetHint(SDL_HINT_ANDROID_TRAP_BACK_BUTTON, "0");
-  if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) != 0)
-    return 1;
-  SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
-  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
-  window = SDL_CreateWindow(
-      "Magister", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 0, 0,
-      SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN | SDL_WINDOW_ALLOW_HIGHDPI);
-  if (!window) {
-    SDL_Quit();
-    return 2;
-  }
-  glContext = SDL_GL_CreateContext(window);
-  SDL_GL_MakeCurrent(window, glContext);
-  SDL_GL_SetSwapInterval(1);
+void updateWindowSize() {
+  if (!gApp || !gApp->window)
+    return;
+  windowWidth = ANativeWindow_getWidth(gApp->window);
+  windowHeight = ANativeWindow_getHeight(gApp->window);
+}
+
+void requestFrameRate(ANativeWindow *window) {
   // Android 11+ supports an NDK frame-rate hint. Resolve dynamically so the
   // same APK still runs on API 24; Android retains power/thermal control.
-  SDL_SysWMinfo platformWindow{};
-  SDL_VERSION(&platformWindow.version);
   using FrameRateHint = int32_t (*)(ANativeWindow *, float, int8_t);
   auto frameRateHint = reinterpret_cast<FrameRateHint>(
       dlsym(RTLD_DEFAULT, "ANativeWindow_setFrameRate"));
-  if (frameRateHint && SDL_GetWindowWMInfo(window, &platformWindow) &&
-      platformWindow.subsystem == SDL_SYSWM_ANDROID) {
-    frameRateHint(platformWindow.info.android.window, 120.0f, 0);
+  if (frameRateHint)
+    frameRateHint(window, 120.0f, 0);
+}
+
+void shutdownEgl() {
+  if (eglDisplay != EGL_NO_DISPLAY) {
+    eglMakeCurrent(eglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+    if (eglSurface != EGL_NO_SURFACE)
+      eglDestroySurface(eglDisplay, eglSurface);
+    if (eglContext != EGL_NO_CONTEXT)
+      eglDestroyContext(eglDisplay, eglContext);
+    eglTerminate(eglDisplay);
   }
+  eglDisplay = EGL_NO_DISPLAY;
+  eglSurface = EGL_NO_SURFACE;
+  eglContext = EGL_NO_CONTEXT;
+}
+
+bool initEgl(android_app *app) {
+  eglDisplay = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+  if (eglDisplay == EGL_NO_DISPLAY)
+    return false;
+  EGLint major = 0, minor = 0;
+  if (!eglInitialize(eglDisplay, &major, &minor)) {
+    shutdownEgl();
+    return false;
+  }
+  const EGLint configAttributes[] = {
+      EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT, EGL_SURFACE_TYPE,
+      EGL_WINDOW_BIT,      EGL_RED_SIZE,        8,
+      EGL_GREEN_SIZE,      8,                   EGL_BLUE_SIZE,
+      8,                   EGL_ALPHA_SIZE,      8,
+      EGL_NONE};
+  EGLConfig config = nullptr;
+  EGLint configCount = 0;
+  if (!eglChooseConfig(eglDisplay, configAttributes, &config, 1,
+                       &configCount) ||
+      configCount < 1) {
+    shutdownEgl();
+    return false;
+  }
+  const EGLint contextAttributes[] = {EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE};
+  eglContext =
+      eglCreateContext(eglDisplay, config, EGL_NO_CONTEXT, contextAttributes);
+  if (eglContext == EGL_NO_CONTEXT) {
+    shutdownEgl();
+    return false;
+  }
+  EGLint format = 0;
+  eglGetConfigAttrib(eglDisplay, config, EGL_NATIVE_VISUAL_ID, &format);
+  ANativeWindow_setBuffersGeometry(app->window, 0, 0, format);
+  eglSurface = eglCreateWindowSurface(eglDisplay, config, app->window, nullptr);
+  if (eglSurface == EGL_NO_SURFACE ||
+      !eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)) {
+    shutdownEgl();
+    return false;
+  }
+  eglSwapInterval(eglDisplay, 1);
+  return true;
+}
+
+void initImGuiBackends(android_app *app) {
+  ImGui_ImplAndroid_Init(app->window);
+  ImGui_ImplOpenGL3_Init("#version 300 es");
+  imguiBackends = true;
+}
+
+void initializeImGui(android_app *app) {
   IMGUI_CHECKVERSION();
   ImGui::CreateContext();
+  imguiInitialized = true;
   ImGuiIO &io = ImGui::GetIO();
   io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-  iniPath = std::string(SDL_AndroidGetInternalStoragePath()) + "/imgui.ini";
-  settingsPath =
-      std::string(SDL_AndroidGetInternalStoragePath()) + "/settings.txt";
+  iniPath = platform::internalDataPath() + "/imgui.ini";
+  settingsPath = platform::internalDataPath() + "/settings.txt";
   settings = magister::loadSettings(settingsPath);
   io.IniFilename = iniPath.c_str();
-  int screenWidth = 0, screenHeight = 0;
-  SDL_GetWindowSize(window, &screenWidth, &screenHeight);
-  float scale = std::max(1.0f, screenWidth / 400.0f);
+  updateWindowSize();
+  float scale = std::max(1.0f, windowWidth / 400.0f);
   uiScale = scale;
   ImFontConfig font;
   font.SizePixels = 16.0f * scale;
@@ -335,136 +445,198 @@ int main(int, char **) {
   style.Colors[ImGuiCol_ButtonHovered] = {.18f, .22f, .28f, 1};
   style.Colors[ImGuiCol_ButtonActive] = {.20f, .30f, .43f, 1};
   style.Colors[ImGuiCol_FrameBg] = {.10f, .12f, .16f, 1};
-  ImGui_ImplSDL2_InitForOpenGL(window, glContext);
-  ImGui_ImplOpenGL3_Init("#version 300 es");
-  bool running = true;
-  bool keyboardVisible = false;
-  ImVec2 fingerPos{};
-  bool fingerMoved = false;
-  std::vector<double> scrollFrameTimes;
-  while (running) {
-    const auto frameStart = SDL_GetPerformanceCounter();
-    SDL_Event event;
-    while (SDL_PollEvent(&event)) {
-      ImGui_ImplSDL2_ProcessEvent(&event);
-      if (event.type == SDL_FINGERDOWN || event.type == SDL_FINGERMOTION ||
-          event.type == SDL_FINGERUP) {
-        int logicalWidth = 0, logicalHeight = 0;
-        SDL_GetWindowSize(window, &logicalWidth, &logicalHeight);
-        io.AddMouseSourceEvent(ImGuiMouseSource_TouchScreen);
-        fingerPos = {event.tfinger.x * logicalWidth,
-                     event.tfinger.y * logicalHeight};
-        if (event.type == SDL_FINGERDOWN) {
-          touchScroll.reset();
-          touchScroll.down = true;
-          touchScroll.start = touchScroll.last = fingerPos.y;
-          touchScroll.startX = touchScroll.lastX = fingerPos.x;
-          touchScroll.timestamp = event.tfinger.timestamp;
-          touchScroll.eligible = fingerPos.x >= touchScroll.min.x &&
-                                 fingerPos.x <= touchScroll.max.x &&
-                                 fingerPos.y >= touchScroll.min.y &&
-                                 fingerPos.y <= touchScroll.max.y;
-          io.AddMousePosEvent(fingerPos.x, fingerPos.y);
-          io.AddMouseButtonEvent(0, true);
-        } else if (event.type == SDL_FINGERMOTION) {
-          fingerMoved = true;
-          float y = fingerPos.y;
-          const float dx = fingerPos.x - touchScroll.startX;
-          const float dy = y - touchScroll.start;
-          if (touchScroll.eligible && !touchScroll.dragging &&
-              !touchScroll.swiping && std::abs(dx) > 12 * uiScale &&
-              std::abs(dx) > std::abs(dy) * 1.25f) {
-            touchScroll.swiping = true;
-            io.AddMousePosEvent(-10000, -10000);
-            io.AddMouseButtonEvent(0, false);
-          } else if (touchScroll.eligible && !touchScroll.dragging &&
-                     !touchScroll.swiping && std::abs(dy) > 7 * uiScale &&
-                     std::abs(dy) > std::abs(dx) * 0.8f) {
-            touchScroll.dragging = true;
-            io.AddMousePosEvent(-10000, -10000);
-            io.AddMouseButtonEvent(0, false);
-          }
-          if (touchScroll.dragging) {
-            float distance = y - touchScroll.last;
-            touchScroll.verticalTravel += std::abs(distance);
-            float seconds = std::max(
-                0.001f,
-                (event.tfinger.timestamp - touchScroll.timestamp) / 1000.0f);
-            touchScroll.delta += distance;
-            touchScroll.velocity = magister::smoothFlingVelocity(
-                touchScroll.velocity,
-                std::clamp(distance / seconds, -5000 * uiScale, 5000 * uiScale),
-                seconds);
-          }
-          touchScroll.last = y;
-          touchScroll.lastX = fingerPos.x;
-          touchScroll.timestamp = event.tfinger.timestamp;
-        } else if (event.type == SDL_FINGERUP) {
-          if (touchScroll.eligible && touchScroll.swiping) {
-            requestedDayChange = magister::daySwipe(
-                fingerPos.x - touchScroll.startX,
-                fingerPos.y - touchScroll.start, 64 * uiScale);
-          }
-          if (!touchScroll.dragging && !touchScroll.swiping)
-            io.AddMousePosEvent(fingerPos.x, fingerPos.y);
-          io.AddMouseButtonEvent(0, false);
-          touchScroll.down = false;
-          if (event.tfinger.timestamp - touchScroll.timestamp > 100)
-            touchScroll.velocity = 0;
-        }
-      }
-      if (event.type == SDL_QUIT)
-        running = false;
+  initImGuiBackends(app);
+  restoreSavedSession();
+}
+
+void handleAppCommand(android_app *app, int32_t command) {
+  switch (command) {
+  case APP_CMD_INIT_WINDOW:
+    if (!app->window)
+      break;
+    if (!initEgl(app)) {
+      platform::log("Unable to initialize EGL");
+      break;
     }
-    if (fingerMoved && !touchScroll.dragging && !touchScroll.swiping)
-      io.AddMousePosEvent(fingerPos.x, fingerPos.y);
-    fingerMoved = false;
-    ImGui_ImplOpenGL3_NewFrame();
-    ImGui_ImplSDL2_NewFrame();
-    ImGui::NewFrame();
-    if (settings.reduceMotion && !touchScroll.down)
-      touchScroll.velocity = 0;
-    mobileUi();
-    ImGui::Render();
-    if (requestKeyboard) {
-      // Android keyboards keep a composing/autocorrect span in SDL's hidden
-      // EditText. Reset that span when switching fields, then keep text input
-      // alive; stopping it whenever WantTextInput flickers loses composition.
-      if (keyboardVisible)
-        SDL_StopTextInput();
-      SDL_StartTextInput();
-      keyboardVisible = true;
-      requestKeyboard = false;
+    updateWindowSize();
+    requestFrameRate(app->window);
+    if (!imguiInitialized)
+      initializeImGui(app);
+    else if (!imguiBackends)
+      initImGuiBackends(app);
+    windowReady = true;
+    break;
+  case APP_CMD_TERM_WINDOW:
+    windowReady = false;
+    if (imguiBackends) {
+      ImGui_ImplOpenGL3_Shutdown();
+      ImGui_ImplAndroid_Shutdown();
+      imguiBackends = false;
     }
-    int width, height;
-    SDL_GL_GetDrawableSize(window, &width, &height);
-    glViewport(0, 0, width, height);
-    glClearColor(.035f, .055f, .10f, 1);
-    glClear(GL_COLOR_BUFFER_BIT);
-    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-    SDL_GL_SwapWindow(window);
-    const bool scrolling = (touchScroll.down && touchScroll.dragging) ||
-                           std::abs(touchScroll.velocity) > 10 * uiScale;
-    if (scrolling && scrollFrameTimes.size() < 1024) {
-      scrollFrameTimes.push_back(1000.0 *
-                                 (SDL_GetPerformanceCounter() - frameStart) /
-                                 SDL_GetPerformanceFrequency());
-    } else if (!scrolling && !scrollFrameTimes.empty()) {
-      std::sort(scrollFrameTimes.begin(), scrollFrameTimes.end());
-      double total = 0;
-      for (double ms : scrollFrameTimes)
-        total += ms;
-      SDL_Log("Scroll frames: %zu, mean %.2f ms, p95 %.2f ms",
-              scrollFrameTimes.size(), total / scrollFrameTimes.size(),
-              scrollFrameTimes[scrollFrameTimes.size() * 95 / 100]);
-      scrollFrameTimes.clear();
-    }
+    shutdownEgl();
+    break;
+  case APP_CMD_WINDOW_RESIZED:
+  case APP_CMD_CONFIG_CHANGED:
+    updateWindowSize();
+    break;
+  case APP_CMD_LOST_FOCUS:
+    touchScroll.reset();
+    touchScroll.down = false;
+    break;
+  default:
+    break;
   }
-  ImGui_ImplOpenGL3_Shutdown();
-  ImGui_ImplSDL2_Shutdown();
-  ImGui::DestroyContext();
-  SDL_GL_DeleteContext(glContext);
-  SDL_DestroyWindow(window);
-  SDL_Quit();
-  return 0;
+}
+
+int32_t handleInput(android_app *, AInputEvent *event) {
+  const int32_t type = AInputEvent_getType(event);
+  if (type == AINPUT_EVENT_TYPE_KEY) {
+    const int32_t keyCode = AKeyEvent_getKeyCode(event);
+    const int32_t action = AKeyEvent_getAction(event);
+    if (keyCode == AKEYCODE_BACK && action == AKEY_EVENT_ACTION_UP) {
+      platform::finish();
+      return 1;
+    }
+    ImGui_ImplAndroid_HandleInputEvent(event);
+    return 1;
+  }
+  if (type != AINPUT_EVENT_TYPE_MOTION)
+    return 0;
+
+  ImGui_ImplAndroid_HandleInputEvent(event);
+  const int32_t action =
+      AMotionEvent_getAction(event) & AMOTION_EVENT_ACTION_MASK;
+  const float x = AMotionEvent_getX(event, 0);
+  const float y = AMotionEvent_getY(event, 0);
+  const std::int64_t timestamp = AMotionEvent_getEventTime(event) / 1000000;
+  if (action == AMOTION_EVENT_ACTION_DOWN) {
+    touchScroll.reset();
+    touchScroll.down = true;
+    touchScroll.start = touchScroll.last = y;
+    touchScroll.startX = touchScroll.lastX = x;
+    touchScroll.timestamp = timestamp;
+    touchScroll.eligible = x >= touchScroll.min.x && x <= touchScroll.max.x &&
+                           y >= touchScroll.min.y && y <= touchScroll.max.y;
+  } else if (action == AMOTION_EVENT_ACTION_MOVE && touchScroll.down) {
+    const float dx = x - touchScroll.startX;
+    const float dy = y - touchScroll.start;
+    if (touchScroll.eligible && !touchScroll.dragging &&
+        !touchScroll.swiping && std::abs(dx) > 12 * uiScale &&
+        std::abs(dx) > std::abs(dy) * 1.25f) {
+      touchScroll.swiping = true;
+      ImGui::GetIO().AddMousePosEvent(-10000, -10000);
+      ImGui::GetIO().AddMouseButtonEvent(0, false);
+    } else if (touchScroll.eligible && !touchScroll.dragging &&
+               !touchScroll.swiping && std::abs(dy) > 7 * uiScale &&
+               std::abs(dy) > std::abs(dx) * 0.8f) {
+      touchScroll.dragging = true;
+      ImGui::GetIO().AddMousePosEvent(-10000, -10000);
+      ImGui::GetIO().AddMouseButtonEvent(0, false);
+    }
+    if (touchScroll.dragging) {
+      const float distance = y - touchScroll.last;
+      touchScroll.verticalTravel += std::abs(distance);
+      const float seconds = std::max(
+          0.001f, (timestamp - touchScroll.timestamp) / 1000.0f);
+      touchScroll.delta += distance;
+      touchScroll.velocity = magister::smoothFlingVelocity(
+          touchScroll.velocity,
+          std::clamp(distance / seconds, -5000 * uiScale, 5000 * uiScale),
+          seconds);
+    }
+    touchScroll.last = y;
+    touchScroll.lastX = x;
+    touchScroll.timestamp = timestamp;
+  } else if (action == AMOTION_EVENT_ACTION_UP ||
+             action == AMOTION_EVENT_ACTION_CANCEL) {
+    if (action == AMOTION_EVENT_ACTION_UP && touchScroll.eligible &&
+        touchScroll.swiping) {
+      requestedDayChange = magister::daySwipe(
+          x - touchScroll.startX, y - touchScroll.start, 64 * uiScale);
+    }
+    touchScroll.down = false;
+    if (timestamp - touchScroll.timestamp > 100)
+      touchScroll.velocity = 0;
+  }
+  return 1;
+}
+
+void renderFrame() {
+  if (!windowReady || !imguiBackends)
+    return;
+  const std::int64_t frameStart = platform::monotonicMillis();
+  ImGui_ImplOpenGL3_NewFrame();
+  ImGui_ImplAndroid_NewFrame();
+  for (unsigned int codepoint : platform::takeText())
+    ImGui::GetIO().AddInputCharacter(codepoint);
+  ImGui::NewFrame();
+  if (settings.reduceMotion && !touchScroll.down)
+    touchScroll.velocity = 0;
+  mobileUi();
+  ImGui::Render();
+  if (requestKeyboard) {
+    platform::showKeyboard();
+    keyboardVisible = true;
+    requestKeyboard = false;
+  }
+  EGLint width = windowWidth, height = windowHeight;
+  eglQuerySurface(eglDisplay, eglSurface, EGL_WIDTH, &width);
+  eglQuerySurface(eglDisplay, eglSurface, EGL_HEIGHT, &height);
+  if (width > 0)
+    windowWidth = width;
+  if (height > 0)
+    windowHeight = height;
+  glViewport(0, 0, width, height);
+  glClearColor(.035f, .055f, .10f, 1);
+  glClear(GL_COLOR_BUFFER_BIT);
+  ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+  eglSwapBuffers(eglDisplay, eglSurface);
+  const bool scrolling = (touchScroll.down && touchScroll.dragging) ||
+                         std::abs(touchScroll.velocity) > 10 * uiScale;
+  if (scrolling && scrollFrameTimes.size() < 1024) {
+    scrollFrameTimes.push_back(
+        static_cast<double>(platform::monotonicMillis() - frameStart));
+  } else if (!scrolling && !scrollFrameTimes.empty()) {
+    std::sort(scrollFrameTimes.begin(), scrollFrameTimes.end());
+    double total = 0;
+    for (double ms : scrollFrameTimes)
+      total += ms;
+    platform::log("Scroll frames: %zu, mean %.2f ms, p95 %.2f ms",
+                  scrollFrameTimes.size(), total / scrollFrameTimes.size(),
+                  scrollFrameTimes[scrollFrameTimes.size() * 95 / 100]);
+    scrollFrameTimes.clear();
+  }
+}
+
+void android_main(android_app *app) {
+  gApp = app;
+  platform::attach(app);
+  app->onAppCmd = handleAppCommand;
+  app->onInputEvent = handleInput;
+  while (!app->destroyRequested) {
+    int events = 0;
+    android_poll_source *source = nullptr;
+    const int result =
+        ALooper_pollOnce(windowReady ? 0 : -1, nullptr, &events,
+                         reinterpret_cast<void **>(&source));
+    if (result == ALOOPER_POLL_ERROR)
+      break;
+    if (result >= 0 && source)
+      source->process(app, source);
+    if (app->destroyRequested)
+      break;
+    if (windowReady)
+      renderFrame();
+  }
+  if (imguiBackends) {
+    ImGui_ImplOpenGL3_Shutdown();
+    ImGui_ImplAndroid_Shutdown();
+    imguiBackends = false;
+  }
+  if (imguiInitialized) {
+    ImGui::DestroyContext();
+    imguiInitialized = false;
+  }
+  shutdownEgl();
+  gApp = nullptr;
 }

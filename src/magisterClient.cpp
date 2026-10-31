@@ -1,12 +1,15 @@
 #include "magisterClient.h"
 
-#include <SDL_system.h>
+#include "androidPlatform.h"
+
 #include <algorithm>
 #include <array>
 #include <cctype>
 #include <chrono>
+#include <curl/curl.h>
+#include <dirent.h>
 #include <iomanip>
-#include <jni.h>
+#include <mutex>
 #include <random>
 #include <regex>
 #include <sstream>
@@ -15,16 +18,6 @@
 
 namespace magister {
 namespace {
-
-std::string fromJString(JNIEnv *env, jstring value) {
-  if (!value)
-    return {};
-  const char *chars = env->GetStringUTFChars(value, nullptr);
-  std::string result(chars ? chars : "");
-  if (chars)
-    env->ReleaseStringUTFChars(value, chars);
-  return result;
-}
 
 std::string encode(const std::string &text) {
   std::ostringstream out;
@@ -166,71 +159,185 @@ Json parseOidcConfig(const std::string &script) {
   throw std::runtime_error("School configuration JSON is incomplete");
 }
 
+struct CurlState {
+  ~CurlState() {
+    if (share)
+      curl_share_cleanup(share);
+    if (initialized)
+      curl_global_cleanup();
+  }
+
+  std::mutex mutex;
+  CURLSH *share = nullptr;
+  std::string caPath;
+  bool initialized = false;
+};
+
+CurlState &curlState() {
+  static CurlState state;
+  return state;
+}
+
+bool containsCertificates(const char *path) {
+  DIR *directory = opendir(path);
+  if (!directory)
+    return false;
+  bool found = false;
+  while (dirent *entry = readdir(directory)) {
+    if (entry->d_name[0] != '.') {
+      found = true;
+      break;
+    }
+  }
+  closedir(directory);
+  return found;
+}
+
+std::string certificatePath() {
+  for (const char *path :
+       {"/apex/com.android.conscrypt/cacerts", "/system/etc/security/cacerts",
+        "/etc/security/cacerts", "/etc/ssl/certs"}) {
+    if (containsCertificates(path))
+      return path;
+  }
+  return {};
+}
+
+void initializeCurl(CurlState &state) {
+  if (state.initialized)
+    return;
+  if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK)
+    throw std::runtime_error("Unable to initialize libcurl");
+  state.share = curl_share_init();
+  if (!state.share) {
+    curl_global_cleanup();
+    throw std::runtime_error("Unable to initialize the cookie store");
+  }
+  curl_share_setopt(state.share, CURLSHOPT_SHARE, CURL_LOCK_DATA_COOKIE);
+  curl_share_setopt(state.share, CURLSHOPT_SHARE, CURL_LOCK_DATA_DNS);
+  curl_share_setopt(state.share, CURLSHOPT_SHARE, CURL_LOCK_DATA_SSL_SESSION);
+  state.caPath = certificatePath();
+  state.initialized = true;
+}
+
+std::size_t writeBody(char *data, std::size_t size, std::size_t count,
+                      void *userdata) {
+  auto *body = static_cast<std::string *>(userdata);
+  body->append(data, size * count);
+  return size * count;
+}
+
+std::string xsrfFromCookies(CURL *handle) {
+  curl_slist *cookies = nullptr;
+  if (curl_easy_getinfo(handle, CURLINFO_COOKIELIST, &cookies) != CURLE_OK ||
+      !cookies)
+    return {};
+  std::string xsrf;
+  for (curl_slist *item = cookies; item; item = item->next) {
+    std::vector<std::string> fields;
+    std::istringstream line(item->data);
+    std::string field;
+    while (std::getline(line, field, '\t'))
+      fields.push_back(field);
+    if (fields.size() >= 7 && fields[5] == "XSRF-TOKEN")
+      xsrf = fields[6];
+  }
+  curl_slist_free_all(cookies);
+  return xsrf;
+}
+
+struct EasyHandle {
+  EasyHandle() : handle(curl_easy_init()) {}
+  ~EasyHandle() {
+    if (headers)
+      curl_slist_free_all(headers);
+    if (handle)
+      curl_easy_cleanup(handle);
+  }
+
+  CURL *handle = nullptr;
+  curl_slist *headers = nullptr;
+};
+
 } // namespace
 
-HttpResponse AndroidHttp::request(const std::string &method,
-                                  const std::string &url,
-                                  const std::string &body,
-                                  const Json &headers) const {
-  JNIEnv *env = static_cast<JNIEnv *>(SDL_AndroidGetJNIEnv());
-  jobject activity = static_cast<jobject>(SDL_AndroidGetActivity());
-  if (!env || !activity)
-    throw std::runtime_error("Android HTTP bridge unavailable");
-  jclass clazz = env->GetObjectClass(activity);
-  jmethodID call =
-      env->GetMethodID(clazz, "httpRequest",
-                       "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/"
-                       "String;Ljava/lang/String;)Ljava/lang/String;");
-  if (!call)
-    throw std::runtime_error("HTTP bridge method unavailable");
-  jstring jm = env->NewStringUTF(method.c_str()),
-          ju = env->NewStringUTF(url.c_str());
-  jstring jb = env->NewStringUTF(body.c_str()),
-          jh = env->NewStringUTF(headers.dump().c_str());
-  auto result = static_cast<jstring>(
-      env->CallObjectMethod(activity, call, jm, ju, jb, jh));
-  std::string raw = fromJString(env, result);
-  env->DeleteLocalRef(jm);
-  env->DeleteLocalRef(ju);
-  env->DeleteLocalRef(jb);
-  env->DeleteLocalRef(jh);
-  if (result)
-    env->DeleteLocalRef(result);
-  env->DeleteLocalRef(clazz);
-  Json parsed = Json::parse(raw.empty() ? "{}" : raw);
+HttpResponse HttpClient::request(const std::string &method,
+                                 const std::string &url,
+                                 const std::string &body,
+                                 const Json &headers) const {
+  CurlState &state = curlState();
+  std::lock_guard lock(state.mutex);
+  initializeCurl(state);
+  EasyHandle easy;
+  if (!easy.handle)
+    throw std::runtime_error("Unable to create an HTTP request");
+  auto header = [&](const char *name, const char *value) {
+    if (!headers.contains(name)) {
+      std::string line = std::string(name) + ": " + value;
+      easy.headers = curl_slist_append(easy.headers, line.c_str());
+    }
+  };
+  header("User-Agent", "MagisterNative/1.0 (Android)");
+  header("Accept", "application/json");
+  header("Accept-Language", "en-US,en;q=0.9");
+  for (auto it = headers.begin(); it != headers.end(); ++it) {
+    std::string line = it.key() + ": " +
+                       (it.value().is_string() ? it.value().get<std::string>()
+                                               : it.value().dump());
+    easy.headers = curl_slist_append(easy.headers, line.c_str());
+  }
+
+  std::string data;
+  char error[CURL_ERROR_SIZE] = {};
+  curl_easy_setopt(easy.handle, CURLOPT_URL, url.c_str());
+  curl_easy_setopt(easy.handle, CURLOPT_CUSTOMREQUEST, method.c_str());
+  curl_easy_setopt(easy.handle, CURLOPT_HTTPHEADER, easy.headers);
+  curl_easy_setopt(easy.handle, CURLOPT_WRITEFUNCTION, writeBody);
+  curl_easy_setopt(easy.handle, CURLOPT_WRITEDATA, &data);
+  curl_easy_setopt(easy.handle, CURLOPT_FOLLOWLOCATION, 1L);
+  curl_easy_setopt(easy.handle, CURLOPT_MAXREDIRS, 10L);
+  curl_easy_setopt(easy.handle, CURLOPT_CONNECTTIMEOUT, 20L);
+  curl_easy_setopt(easy.handle, CURLOPT_TIMEOUT, 30L);
+  curl_easy_setopt(easy.handle, CURLOPT_NOSIGNAL, 1L);
+  curl_easy_setopt(easy.handle, CURLOPT_SSL_VERIFYPEER, 1L);
+  curl_easy_setopt(easy.handle, CURLOPT_SSL_VERIFYHOST, 2L);
+  curl_easy_setopt(easy.handle, CURLOPT_PROTOCOLS_STR, "https");
+  curl_easy_setopt(easy.handle, CURLOPT_REDIR_PROTOCOLS_STR, "https");
+  curl_easy_setopt(easy.handle, CURLOPT_ERRORBUFFER, error);
+  curl_easy_setopt(easy.handle, CURLOPT_COOKIEFILE, "");
+  curl_easy_setopt(easy.handle, CURLOPT_SHARE, state.share);
+  if (!state.caPath.empty())
+    curl_easy_setopt(easy.handle, CURLOPT_CAPATH, state.caPath.c_str());
+  if (method == "POST" || method == "PUT" || method == "PATCH" ||
+      method == "DELETE") {
+    curl_easy_setopt(easy.handle, CURLOPT_POSTFIELDS, body.c_str());
+    curl_easy_setopt(easy.handle, CURLOPT_POSTFIELDSIZE_LARGE,
+                     static_cast<curl_off_t>(body.size()));
+  }
+
+  CURLcode result = curl_easy_perform(easy.handle);
+  if (result != CURLE_OK) {
+    std::string message =
+        error[0] ? error : curl_easy_strerror(result);
+    throw std::runtime_error(message);
+  }
   HttpResponse response;
-  response.status = parsed.value("status", 0);
-  response.url = parsed.value("url", "");
-  response.body = parsed.value("body", "");
-  response.xsrf = parsed.value("xsrf", "");
-  response.error = parsed.value("error", "");
-  if (!response.error.empty())
-    throw std::runtime_error(response.error);
+  long status = 0;
+  curl_easy_getinfo(easy.handle, CURLINFO_RESPONSE_CODE, &status);
+  response.status = static_cast<int>(status);
+  char *effective = nullptr;
+  curl_easy_getinfo(easy.handle, CURLINFO_EFFECTIVE_URL, &effective);
+  response.url = effective ? effective : url;
+  response.body = std::move(data);
+  response.xsrf = xsrfFromCookies(easy.handle);
   return response;
 }
 
-std::string AndroidHttp::webLogin(const std::string &url) const {
-  JNIEnv *env = static_cast<JNIEnv *>(SDL_AndroidGetJNIEnv());
-  jobject activity = static_cast<jobject>(SDL_AndroidGetActivity());
-  jclass clazz = env->GetObjectClass(activity);
-  jmethodID call = env->GetMethodID(clazz, "webLogin",
-                                    "(Ljava/lang/String;)Ljava/lang/String;");
-  if (!call)
-    throw std::runtime_error("Web login bridge unavailable");
-  jstring input = env->NewStringUTF(url.c_str());
-  auto result =
-      static_cast<jstring>(env->CallObjectMethod(activity, call, input));
-  std::string callback = fromJString(env, result);
-  env->DeleteLocalRef(input);
-  if (result)
-    env->DeleteLocalRef(result);
-  env->DeleteLocalRef(clazz);
-  if (callback.empty())
-    throw std::runtime_error("Web login was cancelled");
-  return callback;
+std::string HttpClient::webLogin(const std::string &url) const {
+  return platform::webLogin(url);
 }
 
-Client::Client(AndroidHttp http, std::string school)
+Client::Client(HttpClient http, std::string school)
     : http_(http), school_(normalizeSchool(std::move(school))) {
   if (school_.empty())
     throw std::runtime_error("Invalid school name");
@@ -320,6 +427,12 @@ void Client::login() {
     throw std::runtime_error("Login completed without access token");
   accessToken_ = webFragment["access_token"];
 }
+
+void Client::restoreSession(std::string accessToken) {
+  accessToken_ = std::move(accessToken);
+}
+
+const std::string &Client::accessToken() const { return accessToken_; }
 
 Json Client::api(const std::string &path,
                  const std::unordered_map<std::string, std::string> &params) {

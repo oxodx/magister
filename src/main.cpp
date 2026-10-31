@@ -8,11 +8,11 @@
 #include "scrollPhysics.h"
 #include <EGL/egl.h>
 #include <GLES3/gl3.h>
+#include <algorithm>
 #include <android/input.h>
 #include <android/keycodes.h>
 #include <android/native_window.h>
 #include <android_native_app_glue.h>
-#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -236,47 +236,48 @@ void restoreSavedSession() {
   if (sessionRestoreStarted)
     return;
   sessionRestoreStarted = true;
-  std::string school = magister::Client::normalizeSchool(platform::loadSchool());
+  std::string school =
+      magister::Client::normalizeSchool(platform::loadSchool());
   if (!school.empty()) {
     state.school.fill(0);
-    std::copy_n(school.data(),
-                std::min(school.size(), state.school.size() - 1),
+    std::copy_n(school.data(), std::min(school.size(), state.school.size() - 1),
                 state.school.data());
   }
   std::string token = platform::loadSessionToken();
   if (school.empty() || token.empty())
     return;
-  runAsync([school = std::move(school), token = std::move(token),
-            day = agendaDay] {
-    auto client =
-        std::make_shared<magister::Client>(magister::HttpClient(), school);
-    client->restoreSession(token);
-    magister::Json data;
-    try {
-      data = client->appointments(dateOffset(day - 3), dateOffset(day + 4));
-    } catch (const std::exception &error) {
-      const std::string message = error.what();
-      if (message.find("HTTP 401") == std::string::npos &&
-          message.find("Session expired") == std::string::npos)
-        throw;
-      // The official WebView retains Magister's own login cookie. In the
-      // common case this refreshes silently; school SSO may still ask the user.
-      client->login();
-      platform::saveSession(school, client->accessToken());
-      data = client->appointments(dateOffset(day - 3), dateOffset(day + 4));
-    }
-    std::stable_sort(data.begin(), data.end(),
-                     [](const auto &a, const auto &b) {
-                       return value(a, {"Start"}) < value(b, {"Start"});
-                     });
-    std::lock_guard lock(state.mutex);
-    state.client = std::move(client);
-    state.loggedIn = true;
-    state.page = Page::Schedule;
-    state.loadedDay = day;
-    state.rows = std::make_shared<const magister::Json>(std::move(data));
-    state.status = "Signed in";
-  });
+  runAsync(
+      [school = std::move(school), token = std::move(token), day = agendaDay] {
+        auto client =
+            std::make_shared<magister::Client>(magister::HttpClient(), school);
+        client->restoreSession(token);
+        magister::Json data;
+        try {
+          data = client->appointments(dateOffset(day - 3), dateOffset(day + 4));
+        } catch (const std::exception &error) {
+          const std::string message = error.what();
+          if (message.find("HTTP 401") == std::string::npos &&
+              message.find("Session expired") == std::string::npos)
+            throw;
+          // The official WebView retains Magister's own login cookie. In the
+          // common case this refreshes silently; school SSO may still ask the
+          // user.
+          client->login();
+          platform::saveSession(school, client->accessToken());
+          data = client->appointments(dateOffset(day - 3), dateOffset(day + 4));
+        }
+        std::stable_sort(data.begin(), data.end(),
+                         [](const auto &a, const auto &b) {
+                           return value(a, {"Start"}) < value(b, {"Start"});
+                         });
+        std::lock_guard lock(state.mutex);
+        state.client = std::move(client);
+        state.loggedIn = true;
+        state.page = Page::Schedule;
+        state.loadedDay = day;
+        state.rows = std::make_shared<const magister::Json>(std::move(data));
+        state.status = "Signed in";
+      });
 }
 
 void openBook(magister::Json book) {
@@ -362,12 +363,19 @@ bool initEgl(android_app *app) {
     shutdownEgl();
     return false;
   }
-  const EGLint configAttributes[] = {
-      EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT, EGL_SURFACE_TYPE,
-      EGL_WINDOW_BIT,      EGL_RED_SIZE,        8,
-      EGL_GREEN_SIZE,      8,                   EGL_BLUE_SIZE,
-      8,                   EGL_ALPHA_SIZE,      8,
-      EGL_NONE};
+  const EGLint configAttributes[] = {EGL_RENDERABLE_TYPE,
+                                     EGL_OPENGL_ES3_BIT,
+                                     EGL_SURFACE_TYPE,
+                                     EGL_WINDOW_BIT,
+                                     EGL_RED_SIZE,
+                                     8,
+                                     EGL_GREEN_SIZE,
+                                     8,
+                                     EGL_BLUE_SIZE,
+                                     8,
+                                     EGL_ALPHA_SIZE,
+                                     8,
+                                     EGL_NONE};
   EGLConfig config = nullptr;
   EGLint configCount = 0;
   if (!eglChooseConfig(eglDisplay, configAttributes, &config, 1,
@@ -521,9 +529,8 @@ int32_t handleInput(android_app *, AInputEvent *event) {
   } else if (action == AMOTION_EVENT_ACTION_MOVE && touchScroll.down) {
     const float dx = x - touchScroll.startX;
     const float dy = y - touchScroll.start;
-    if (touchScroll.eligible && !touchScroll.dragging &&
-        !touchScroll.swiping && std::abs(dx) > 12 * uiScale &&
-        std::abs(dx) > std::abs(dy) * 1.25f) {
+    if (touchScroll.eligible && !touchScroll.dragging && !touchScroll.swiping &&
+        std::abs(dx) > 12 * uiScale && std::abs(dx) > std::abs(dy) * 1.25f) {
       touchScroll.swiping = true;
       ImGui::GetIO().AddMousePosEvent(-10000, -10000);
       ImGui::GetIO().AddMouseButtonEvent(0, false);
@@ -537,8 +544,8 @@ int32_t handleInput(android_app *, AInputEvent *event) {
     if (touchScroll.dragging) {
       const float distance = y - touchScroll.last;
       touchScroll.verticalTravel += std::abs(distance);
-      const float seconds = std::max(
-          0.001f, (timestamp - touchScroll.timestamp) / 1000.0f);
+      const float seconds =
+          std::max(0.001f, (timestamp - touchScroll.timestamp) / 1000.0f);
       touchScroll.delta += distance;
       touchScroll.velocity = magister::smoothFlingVelocity(
           touchScroll.velocity,
@@ -623,9 +630,8 @@ void android_main(android_app *app) {
   while (!app->destroyRequested) {
     int events = 0;
     android_poll_source *source = nullptr;
-    const int result =
-        ALooper_pollOnce(windowReady ? 0 : -1, nullptr, &events,
-                         reinterpret_cast<void **>(&source));
+    const int result = ALooper_pollOnce(windowReady ? 0 : -1, nullptr, &events,
+                                        reinterpret_cast<void **>(&source));
     if (result == ALOOPER_POLL_ERROR)
       break;
     if (result >= 0 && source)

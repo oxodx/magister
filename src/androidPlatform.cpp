@@ -30,7 +30,8 @@ public:
     if (app_->activity->vm->GetEnv(reinterpret_cast<void **>(&env_),
                                    JNI_VERSION_1_6) == JNI_EDETACHED) {
       if (app_->activity->vm->AttachCurrentThread(&env_, nullptr) != JNI_OK)
-        throw std::runtime_error("Unable to attach the native thread to the JVM");
+        throw std::runtime_error(
+            "Unable to attach the native thread to the JVM");
       attached_ = true;
     }
   }
@@ -105,8 +106,8 @@ std::string webLogin(const std::string &url) {
   ScopedEnv env(state);
   jobject activity = state->activity->clazz;
   jclass activityClass = env->GetObjectClass(activity);
-  jmethodID method = env->GetMethodID(
-      activityClass, "webLogin", "(Ljava/lang/String;)Ljava/lang/String;");
+  jmethodID method = env->GetMethodID(activityClass, "webLogin",
+                                      "(Ljava/lang/String;)Ljava/lang/String;");
   if (!method) {
     checkException(env.get(), "Web login bridge is unavailable");
     throw std::runtime_error("Web login bridge is unavailable");

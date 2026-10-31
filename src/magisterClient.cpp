@@ -1,7 +1,5 @@
 #include "magisterClient.h"
-
 #include "androidPlatform.h"
-
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -317,8 +315,7 @@ HttpResponse HttpClient::request(const std::string &method,
 
   CURLcode result = curl_easy_perform(easy.handle);
   if (result != CURLE_OK) {
-    std::string message =
-        error[0] ? error : curl_easy_strerror(result);
+    std::string message = error[0] ? error : curl_easy_strerror(result);
     throw std::runtime_error(message);
   }
   HttpResponse response;

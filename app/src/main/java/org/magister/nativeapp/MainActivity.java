@@ -13,12 +13,14 @@ import android.util.Base64;
 import android.view.KeyEvent;
 import android.view.Gravity;
 import android.view.ViewGroup;
+import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.webkit.CookieManager;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.text.Editable;
+import android.text.InputType;
 import android.text.TextWatcher;
 import android.widget.EditText;
 import android.widget.FrameLayout;
@@ -46,6 +48,10 @@ public final class MainActivity extends NativeActivity {
     super.onCreate(savedInstanceState);
     keyboardEditor = new EditText(this);
     keyboardEditor.setSingleLine(true);
+    keyboardEditor.setInputType(InputType.TYPE_CLASS_TEXT
+        | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+    keyboardEditor.setImeOptions(EditorInfo.IME_ACTION_DONE
+        | EditorInfo.IME_FLAG_NO_EXTRACT_UI);
     keyboardEditor.setTextColor(Color.TRANSPARENT);
     keyboardEditor.setHintTextColor(Color.TRANSPARENT);
     keyboardEditor.setBackgroundColor(Color.TRANSPARENT);

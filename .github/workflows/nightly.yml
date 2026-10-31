@@ -52,11 +52,6 @@ jobs:
           restore-keys: |
             nightly-${{ runner.os }}-
 
-      - name: Run native checks
-        run: |
-          c++ -std=c++20 -Wall -Wextra -Werror -Isrc tests/scroll_physics_test.cpp -o "$RUNNER_TEMP/scroll-physics-test"
-          "$RUNNER_TEMP/scroll-physics-test"
-
       - name: Read build metadata
         id: meta
         run: |

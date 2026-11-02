@@ -479,7 +479,7 @@ std::string Client::personId() {
 }
 Json Client::appointments(const std::string &from, const std::string &to) {
   return items(api("personen/" + personId() + "/afspraken",
-                   {{"van", from}, {"tot", to}}));
+                   {{"status", "1"}, {"van", from}, {"tot", to}}));
 }
 Json Client::grades() {
   auto enrollments = items(api("leerlingen/" + personId() + "/aanmeldingen/"));

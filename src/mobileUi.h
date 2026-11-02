@@ -97,6 +97,25 @@ std::string testName(const magister::Json &row) {
     s = value(row, {"Omschrijving", "KolomOmschrijving"});
   return s.empty() ? "Tap for test details" : plainText(s);
 }
+bool cancelledAppointment(const magister::Json &row) {
+  for (const char *key : {"Status", "Uitval", "Vervallen", "IsVervallen"}) {
+    if (!row.contains(key) || row[key].is_null())
+      continue;
+    if (row[key].is_number_integer() && row[key].get<int>() == 5)
+      return true;
+    if (row[key].is_boolean() && row[key].get<bool>())
+      return true;
+    if (row[key].is_string()) {
+      auto status = row[key].get<std::string>();
+      std::transform(status.begin(), status.end(), status.begin(),
+                     [](unsigned char c) { return std::tolower(c); });
+      if (status == "true" || status == "vervallen" ||
+          status == "cancelled" || status == "canceled")
+        return true;
+    }
+  }
+  return false;
+}
 std::string rowTitle(Page page, const magister::Json &row) {
   if (page == Page::Grades)
     return gradeSubject(row);
@@ -200,6 +219,8 @@ void detailsView(Page page, const magister::Json &row, bool busy,
       secondary("Physical textbook: no digital access is linked.");
   } else {
     field("Subject", value(row, {"Vak"}));
+    if (page == Page::Schedule && cancelledAppointment(row))
+      field("Status", "Cancelled");
     auto start = localStamp(value(row, {"Start"})),
          end = localStamp(value(row, {"Einde"}));
     if (!start.empty())
@@ -229,6 +250,12 @@ void rowCard(Page page, const magister::Json &row, float height, bool busy) {
                     ImGuiWindowFlags_NoScrollbar |
                         ImGuiWindowFlags_NoScrollWithMouse);
   auto title = rowTitle(page, row);
+  const bool cancelled = page == Page::Schedule && cancelledAppointment(row);
+  if (cancelled) {
+    auto card = ImGui::GetWindowPos();
+    ImGui::GetWindowDrawList()->AddRectFilled(
+        card, {card.x + dp(4), card.y + height}, IM_COL32(220, 80, 88, 255));
+  }
   float contentWidth = ImGui::GetContentRegionAvail().x - dp(14);
   if (page == Page::Schedule) {
     auto start = localStamp(value(row, {"Start"})),
@@ -246,7 +273,11 @@ void rowCard(Page page, const magister::Json &row, float height, bool busy) {
     if (room.empty())
       room = value(row, {"Lokatie", "Locatie"});
     auto teacher = firstNested(row, "Docenten", {"Naam", "Docentcode"});
-    secondary(room + (room.empty() || teacher.empty() ? "" : " / ") + teacher);
+    auto subtitle =
+        room + (room.empty() || teacher.empty() ? "" : " / ") + teacher;
+    if (cancelled)
+      subtitle = "CANCELLED" + (subtitle.empty() ? "" : " / " + subtitle);
+    secondary(subtitle);
     auto homework = value(row, {"Inhoud", "Huiswerk", "Aantekening"});
     if (settings.showHomeworkBadges && !plainText(homework).empty()) {
       ImGui::PushStyleColor(ImGuiCol_Text, blue);
@@ -440,6 +471,7 @@ void mobileUi() {
   if (logged)
     flags |= ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
   ImGui::Begin("Magister", nullptr, flags);
+  gap(4);
   if (!logged) {
     gap(24);
     ImGui::TextColored(blue, "MAGISTER");

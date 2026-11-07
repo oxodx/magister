@@ -17,6 +17,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <ctime>
 #include <dlfcn.h>
@@ -130,6 +131,19 @@ std::string firstNested(const magister::Json &item, const char *array,
   return value(item[array][0], keys);
 }
 
+// Attendance covers the whole school year, from 1 August to today.
+std::string schoolYearStart() {
+  std::time_t raw = std::chrono::system_clock::to_time_t(
+      std::chrono::system_clock::now());
+  std::tm local{};
+  localtime_r(&raw, &local);
+  // Months January to July belong to the school year that began last August.
+  const int year = local.tm_year + 1900 - (local.tm_mon < 7 ? 1 : 0);
+  char text[16];
+  std::snprintf(text, sizeof(text), "%04d-08-01", year);
+  return text;
+}
+
 // One fetch covers two weeks around the anchor day, so swiping between days
 // inside that window never needs the network.
 std::pair<std::string, std::string> scheduleRange(int day) {
@@ -209,7 +223,7 @@ void load(Page page, bool refresh = false) {
       data = client->messages();
       break;
     case Page::Absences:
-      data = client->absences(dateOffset(-30), dateOffset(0));
+      data = client->absences(schoolYearStart(), dateOffset(0));
       break;
     }
     if (page == Page::Schedule)

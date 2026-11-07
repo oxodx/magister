@@ -1,6 +1,7 @@
 #pragma once
 
 void settingsView() {
+  beginFeed();
   secondary("Make the app work the way you expect.");
   gap(14);
   ImGui::SeparatorText("Schedule");
@@ -18,4 +19,5 @@ void settingsView() {
   secondary("Stops momentum scrolling after you lift your finger.");
   if (changed)
     magister::saveSettings(settingsPath, settings);
+  ImGui::EndChild();
 }

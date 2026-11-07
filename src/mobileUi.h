@@ -33,14 +33,15 @@ std::string plainText(const std::string &html) {
     else if (!tag)
       out += c;
   }
+  // &amp; must be decoded last, otherwise "&amp;lt;" would become "<".
   for (const auto &[from, to] :
        std::initializer_list<std::pair<std::string, std::string>>{
            {"&nbsp;", " "},
-           {"&amp;", "&"},
            {"&lt;", "<"},
            {"&gt;", ">"},
            {"&quot;", "\""},
-           {"&#39;", "'"}}) {
+           {"&#39;", "'"},
+           {"&amp;", "&"}}) {
     size_t pos = 0;
     while ((pos = out.find(from, pos)) != std::string::npos) {
       out.replace(pos, from.size(), to);
@@ -323,10 +324,15 @@ void rowCard(Page page, const magister::Json &row, float height, bool busy) {
     else
       secondary(dateLabel(value(row, {"Start"})));
   }
-  auto pos = ImGui::GetWindowPos();
-  ImGui::GetWindowDrawList()->AddText(
-      {pos.x + ImGui::GetWindowSize().x - dp(17), pos.y + height * .5f - dp(8)},
-      IM_COL32(109, 126, 149, 255), ">");
+  // Vector chevron: no font-glyph dependency, and it stays crisp at any scale.
+  auto *chevronDraw = ImGui::GetWindowDrawList();
+  const ImVec2 windowPos = ImGui::GetWindowPos();
+  const ImVec2 tip{windowPos.x + ImGui::GetWindowSize().x - dp(14),
+                   windowPos.y + height * .5f};
+  const float arm = dp(5);
+  const ImU32 chevronColor = IM_COL32(109, 126, 149, 255);
+  chevronDraw->AddLine({tip.x - arm, tip.y - arm}, tip, chevronColor, dp(2));
+  chevronDraw->AddLine({tip.x - arm, tip.y + arm}, tip, chevronColor, dp(2));
   bool hovered = ImGui::IsWindowHovered();
   ImGui::EndChild();
   ImGui::PopStyleColor();
@@ -428,6 +434,13 @@ void weekPicker() {
                           base + i == agendaDay ? blue : ImVec4(0, 0, 0, 0));
     if (ImGui::Button(label.c_str(), {width, dp(52)}))
       changeDay(base + i);
+    if (base + i == 0) {
+      // agendaDay 0 is today; mark it so users can find it after swiping.
+      const ImVec2 min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
+      ImGui::GetWindowDrawList()->AddCircleFilled(
+          {(min.x + max.x) * .5f, max.y - dp(4)}, dp(2),
+          IM_COL32(115, 211, 179, 255));
+    }
     ImGui::PopStyleColor();
     ImGui::PopID();
   }
@@ -611,12 +624,16 @@ void mobileUi() {
       }
       if (!busy && error.empty() && visible.empty()) {
         gap(24);
-        heading(page == Page::Schedule ? "Nothing scheduled"
-                                       : "You're all caught up");
-        secondary(
-            page == Page::Schedule
-                ? "Choose another day in the week above."
-                : "New items will appear here when your school adds them.");
+        if (page == Page::Schedule) {
+          heading("Nothing scheduled");
+          secondary("Choose another day in the week above.");
+        } else if (!query.empty()) {
+          heading("No matches");
+          secondary("Try a different subject or title.");
+        } else {
+          heading("You're all caught up");
+          secondary("New items will appear here when your school adds them.");
+        }
       }
       const float height = dp(
           page == Page::Books

@@ -30,6 +30,7 @@ void moreView(bool busy) {
   gap(8);
   ImGui::BeginDisabled(busy);
   if (action("Sign out", false, 0, 44)) {
+    magister::cache::erase();
     platform::clearSession();
     std::lock_guard lock(state.mutex);
     state.loggedIn = false;

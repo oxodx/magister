@@ -474,7 +474,8 @@ void mobileUi() {
     requestedDayChange = 0;
   }
   if (logged && !moreScreen && !settingsScreen && page == Page::Schedule &&
-      !detailOpen && !busy && error.empty() && loadedDay != agendaDay)
+      !detailOpen && !busy && error.empty() &&
+      std::abs(loadedDay - agendaDay) > 10)
     load(Page::Schedule);
   const char *names[] = {"Schedule", "Grades",   "Tasks",
                          "Books",    "Messages", "Attendance"};
@@ -540,7 +541,7 @@ void mobileUi() {
       if (ImGui::BeginPopup("options")) {
         ImGui::BeginDisabled(busy);
         if (ImGui::Selectable("Refresh", false, 0, {dp(180), dp(38)})) {
-          load(page);
+          load(page, true);
           ImGui::CloseCurrentPopup();
         }
         if (page == Page::Schedule) {
@@ -601,7 +602,7 @@ void mobileUi() {
         ImGui::TextColored({1, .5f, .5f, 1}, "Unable to load this page");
         secondary(error);
         if (!busy && action("Try again"))
-          load(page);
+          load(page, true);
       }
       std::vector<size_t> visible;
       const auto selectedDate = dateOffset(agendaDay);

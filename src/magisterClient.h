@@ -9,6 +9,17 @@
 namespace magister {
 using Json = nlohmann::json;
 
+// Process-wide response cache shared by every client, so re-sign-ins and tab
+// switches reuse data. Entries are stored with their age; each lookup states
+// the oldest data it will accept.
+namespace cache {
+void open(const std::string &path); // loads persisted entries
+bool lookup(const std::string &key, double maxAgeSeconds, Json &out);
+void store(const std::string &key, const Json &value);
+void save(); // persists entries, dropping ones past the retention limit
+void erase(); // sign-out: clears memory and the file on disk
+} // namespace cache
+
 struct HttpResponse {
   int status = 0;
   std::string url;
@@ -42,13 +53,26 @@ public:
   Json messages();
   Json absences(const std::string &from, const std::string &to);
 
+  // Reads the agenda from the local cache only, without touching the network,
+  // so it can be shown while the live refresh is still running.
+  bool cachedAppointments(const std::string &from, const std::string &to,
+                          Json &out);
+  // Manual refresh: skip cached reads. Fresh responses are still stored.
+  void setBypassCache(bool bypass) { bypassCache_ = bypass; }
+
   static std::string normalizeSchool(std::string value);
 
 private:
   HttpResponse get(const std::string &url,
                    const Json &headers = Json::object());
+  std::string apiUrl(const std::string &path,
+                     const std::unordered_map<std::string, std::string> &params)
+      const;
+  // ttlSeconds == 0 means the response is never read from or written to the
+  // cache (used for short-lived links).
   Json api(const std::string &path,
-           const std::unordered_map<std::string, std::string> &params = {});
+           const std::unordered_map<std::string, std::string> &params = {},
+           double ttlSeconds = 0);
   Json items(const Json &response) const;
   std::string personId();
 
@@ -58,6 +82,7 @@ private:
   std::string accessToken_;
   std::string xsrf_;
   Json person_;
+  bool bypassCache_ = false;
 };
 
 } // namespace magister

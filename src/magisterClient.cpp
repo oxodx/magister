@@ -4,6 +4,10 @@
 #include <array>
 #include <cctype>
 #include <chrono>
+#include <cstdio>
+#include <fstream>
+#include <limits>
+#include <map>
 #include <curl/curl.h>
 #include <dirent.h>
 #include <iomanip>
@@ -16,6 +20,20 @@
 
 namespace magister {
 namespace {
+
+// Cache lifetimes in seconds. Lessons and results change during the school
+// week; enrolment, folder and textbook lists change rarely; test metadata and
+// the account almost never do.
+constexpr double kMinute = 60;
+constexpr double kHour = 60 * kMinute;
+constexpr double kDay = 24 * kHour;
+constexpr double kScheduleTtl = 10 * kMinute;
+constexpr double kResultsTtl = 10 * kMinute;
+constexpr double kMessagesTtl = 5 * kMinute;
+constexpr double kDetailTtl = kHour;
+constexpr double kReferenceTtl = kDay;
+constexpr double kMetadataTtl = 7 * kDay;
+constexpr double kAnyAge = std::numeric_limits<double>::infinity();
 
 std::string encode(const std::string &text) {
   std::ostringstream out;
@@ -259,6 +277,94 @@ struct EasyHandle {
 
 } // namespace
 
+namespace cache {
+namespace {
+struct Entry {
+  double storedAt = 0;
+  Json value;
+};
+std::mutex mutex;
+std::unordered_map<std::string, Entry> entries;
+std::string filePath;
+constexpr double kRetention = 30 * 24 * 3600.0;
+
+double nowSeconds() {
+  return std::chrono::duration<double>(
+             std::chrono::system_clock::now().time_since_epoch())
+      .count();
+}
+} // namespace
+
+void open(const std::string &path) {
+  std::lock_guard lock(mutex);
+  filePath = path;
+  entries.clear();
+  std::ifstream input(path);
+  if (!input)
+    return;
+  try {
+    Json document = Json::parse(input);
+    for (auto it = document.begin(); it != document.end(); ++it) {
+      const Json &entry = it.value();
+      if (entry.is_object() && entry.contains("v"))
+        entries[it.key()] = Entry{entry.value("t", 0.0), entry["v"]};
+    }
+  } catch (const std::exception &) {
+    // A damaged cache is not worth reporting; start empty.
+    entries.clear();
+  }
+}
+
+bool lookup(const std::string &key, double maxAgeSeconds, Json &out) {
+  std::lock_guard lock(mutex);
+  auto found = entries.find(key);
+  if (found == entries.end() ||
+      nowSeconds() - found->second.storedAt > maxAgeSeconds)
+    return false;
+  out = found->second.value;
+  return true;
+}
+
+void store(const std::string &key, const Json &value) {
+  std::lock_guard lock(mutex);
+  entries[key] = Entry{nowSeconds(), value};
+}
+
+void save() {
+  std::lock_guard lock(mutex);
+  if (filePath.empty())
+    return;
+  const double cutoff = nowSeconds() - kRetention;
+  Json document = Json::object();
+  for (auto it = entries.begin(); it != entries.end();) {
+    if (it->second.storedAt < cutoff) {
+      it = entries.erase(it);
+      continue;
+    }
+    document[it->first] =
+        Json{{"t", it->second.storedAt}, {"v", it->second.value}};
+    ++it;
+  }
+  // Write to a temporary file and rename, so a crash never leaves a
+  // half-written cache behind.
+  const std::string temporary = filePath + ".tmp";
+  {
+    std::ofstream output(temporary, std::ios::trunc);
+    if (!output)
+      return;
+    output << document.dump();
+  }
+  std::rename(temporary.c_str(), filePath.c_str());
+}
+
+void erase() {
+  std::lock_guard lock(mutex);
+  entries.clear();
+  if (!filePath.empty())
+    std::remove(filePath.c_str());
+}
+} // namespace cache
+
 HttpResponse HttpClient::request(const std::string &method,
                                  const std::string &url,
                                  const std::string &body,
@@ -431,23 +537,41 @@ void Client::restoreSession(std::string accessToken) {
 
 const std::string &Client::accessToken() const { return accessToken_; }
 
-Json Client::api(const std::string &path,
-                 const std::unordered_map<std::string, std::string> &params) {
+std::string Client::apiUrl(
+    const std::string &path,
+    const std::unordered_map<std::string, std::string> &params) const {
   std::string url = "https://" + schoolServer_ + "/api/" + path;
   if (!params.empty()) {
+    // Sort parameters so the same request always produces the same cache key.
+    const std::map<std::string, std::string> sorted(params.begin(),
+                                                    params.end());
     url += '?';
     bool first = true;
-    for (auto &[k, v] : params) {
+    for (const auto &[k, v] : sorted) {
       if (!first)
         url += '&';
       first = false;
       url += encode(k) + '=' + encode(v);
     }
   }
+  return url;
+}
+
+Json Client::api(const std::string &path,
+                 const std::unordered_map<std::string, std::string> &params,
+                 double ttlSeconds) {
+  const std::string url = apiUrl(path, params);
+  Json cached;
+  if (ttlSeconds > 0 && !bypassCache_ &&
+      cache::lookup(url, ttlSeconds, cached))
+    return cached;
   auto response = get(url);
   if (response.status == 401)
     throw std::runtime_error("Session expired");
-  return Json::parse(response.body);
+  Json parsed = Json::parse(response.body);
+  if (ttlSeconds > 0)
+    cache::store(url, parsed);
+  return parsed;
 }
 
 Json Client::items(const Json &response) const {
@@ -464,7 +588,7 @@ std::string Client::personId() {
   if (person_.is_null() || person_.empty()) {
     // Current Magister web clients resolve the signed-in person through
     // /api/account; /api/personen is no longer a valid collection route.
-    Json account = api("account");
+    Json account = api("account", {}, kMetadataTtl);
     if (account.contains("Persoon"))
       person_ = account["Persoon"];
     else if (account.contains("persoon"))
@@ -477,12 +601,38 @@ std::string Client::personId() {
     throw std::runtime_error("Person has no id");
   return id;
 }
+static std::unordered_map<std::string, std::string>
+appointmentParams(const std::string &from, const std::string &to) {
+  return {{"status", "1"}, {"van", from}, {"tot", to}};
+}
+
+bool Client::cachedAppointments(const std::string &from, const std::string &to,
+                                Json &out) {
+  Json account;
+  if (!cache::lookup(apiUrl("account", {}), kAnyAge, account))
+    return false;
+  const char *key = account.contains("Persoon")  ? "Persoon"
+                    : account.contains("persoon") ? "persoon"
+                                                  : nullptr;
+  const std::string id = stringValue(key ? account[key] : account, "Id", "id");
+  if (id.empty())
+    return false;
+  Json raw;
+  if (!cache::lookup(apiUrl("personen/" + id + "/afspraken",
+                            appointmentParams(from, to)),
+                     kAnyAge, raw))
+    return false;
+  out = items(raw);
+  return true;
+}
+
 Json Client::appointments(const std::string &from, const std::string &to) {
   return items(api("personen/" + personId() + "/afspraken",
-                   {{"status", "1"}, {"van", from}, {"tot", to}}));
+                   appointmentParams(from, to), kScheduleTtl));
 }
 Json Client::grades() {
-  auto enrollments = items(api("leerlingen/" + personId() + "/aanmeldingen/"));
+  auto enrollments =
+      items(api("leerlingen/" + personId() + "/aanmeldingen/", {}, kReferenceTtl));
   if (enrollments.empty())
     throw std::runtime_error("No active school enrollment found.");
   const Json *selected = &enrollments[0];
@@ -498,7 +648,8 @@ Json Client::grades() {
                 {{"actievePerioden", "false"},
                  {"alleenBerekendeKolommen", "false"},
                  {"alleenPTAKolommen", "false"},
-                 {"peildatum", stringValue(*selected, "einde", "Einde")}}));
+                 {"peildatum", stringValue(*selected, "einde", "Einde")}},
+                kResultsTtl));
   Json result = Json::array();
   for (auto &row : rows) {
     if (row.contains("CijferKolom") &&
@@ -537,7 +688,7 @@ Json Client::details(const std::string &kind, const Json &row) {
     if (id.empty() || enrollment.empty())
       return result;
     auto info = api("personen/" + personId() + "/aanmeldingen/" + enrollment +
-                    "/cijfers/extracijferkolominfo/" + id);
+                    "/cijfers/extracijferkolominfo/" + id, {}, kMetadataTtl);
     result["Toetsinformatie"] = info;
     return result;
   }
@@ -570,7 +721,7 @@ Json Client::details(const std::string &kind, const Json &row) {
   }
   if (!path.empty() && path.find(':') == std::string::npos &&
       path.find("..") == std::string::npos && !path.starts_with('/')) {
-    auto info = api(path);
+    auto info = api(path, {}, kDetailTtl);
     if (info.is_object())
       result.update(info);
   }
@@ -578,14 +729,14 @@ Json Client::details(const std::string &kind, const Json &row) {
 }
 Json Client::assignments(const std::string &from, const std::string &to) {
   return items(api("personen/" + personId() + "/opdrachten",
-                   {{"startdatum", from}, {"einddatum", to}}));
+                   {{"startdatum", from}, {"einddatum", to}}, kResultsTtl));
 }
 Json Client::absences(const std::string &from, const std::string &to) {
   return items(api("personen/" + personId() + "/absenties",
-                   {{"van", from}, {"tot", to}}));
+                   {{"van", from}, {"tot", to}}, kResultsTtl));
 }
 Json Client::books() {
-  return items(api("personen/" + personId() + "/lesmateriaal"));
+  return items(api("personen/" + personId() + "/lesmateriaal", {}, kReferenceTtl));
 }
 std::string Client::bookUrl(const Json &book) {
   if (!book.contains("Links") || !book["Links"].is_array())
@@ -617,7 +768,7 @@ std::string Client::bookUrl(const Json &book) {
       "This is a physical textbook; no digital book is linked.");
 }
 Json Client::messages() {
-  Json folders = items(api("berichten/mappen"));
+  Json folders = items(api("berichten/mappen", {}, kReferenceTtl));
   if (folders.empty())
     return Json::array();
   std::string id = stringValue(folders[0], "Id", "id");
@@ -631,7 +782,8 @@ Json Client::messages() {
       break;
     }
   }
-  return items(api("berichten/mappen/" + id + "/berichten", {{"top", "50"}}));
+  return items(api("berichten/mappen/" + id + "/berichten", {{"top", "50"}},
+                   kMessagesTtl));
 }
 
 } // namespace magister

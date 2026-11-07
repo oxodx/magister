@@ -130,6 +130,21 @@ std::string firstNested(const magister::Json &item, const char *array,
   return value(item[array][0], keys);
 }
 
+// One fetch covers two weeks around the anchor day, so swiping between days
+// inside that window never needs the network.
+std::pair<std::string, std::string> scheduleRange(int day) {
+  return {dateOffset(day - 14), dateOffset(day + 14)};
+}
+
+void sortAgenda(magister::Json &data) {
+  std::stable_sort(data.begin(), data.end(), [](const auto &a, const auto &b) {
+    return value(a, {"Start"}) < value(b, {"Start"});
+  });
+}
+
+const char *const kNotConnected =
+    "Not connected to Magister. Reopen the app to reconnect.";
+
 void runAsync(std::function<void()> task) {
   {
     std::lock_guard lock(state.mutex);
@@ -152,7 +167,7 @@ void runAsync(std::function<void()> task) {
   }).detach();
 }
 
-void load(Page page) {
+void load(Page page, bool refresh = false) {
   {
     std::lock_guard lock(state.mutex);
     if (state.busy)
@@ -164,17 +179,23 @@ void load(Page page) {
   resetFeedScroll = true;
   touchScroll.reset();
   int day = agendaDay;
-  runAsync([page, day] {
+  runAsync([page, day, refresh] {
     std::shared_ptr<magister::Client> client;
     {
       std::lock_guard lock(state.mutex);
       client = state.client;
     }
+    if (!client)
+      throw std::runtime_error(kNotConnected);
+    // Manual refresh skips cached reads; ordinary navigation reuses them.
+    client->setBypassCache(refresh);
     magister::Json data;
     switch (page) {
-    case Page::Schedule:
-      data = client->appointments(dateOffset(day - 3), dateOffset(day + 4));
+    case Page::Schedule: {
+      const auto [from, to] = scheduleRange(day);
+      data = client->appointments(from, to);
       break;
+    }
     case Page::Grades:
       data = client->grades();
       break;
@@ -192,10 +213,8 @@ void load(Page page) {
       break;
     }
     if (page == Page::Schedule)
-      std::stable_sort(data.begin(), data.end(),
-                       [](const auto &a, const auto &b) {
-                         return value(a, {"Start"}) < value(b, {"Start"});
-                       });
+      sortAgenda(data);
+    magister::cache::save();
     std::lock_guard lock(state.mutex);
     state.page = page;
     state.rows = std::make_shared<const magister::Json>(std::move(data));
@@ -217,16 +236,15 @@ void login() {
     client->login();
     platform::saveSession(magister::Client::normalizeSchool(school),
                           client->accessToken());
-    auto data = client->appointments(dateOffset(day - 3), dateOffset(day + 4));
+    const auto [from, to] = scheduleRange(day);
+    auto data = client->appointments(from, to);
+    sortAgenda(data);
+    magister::cache::save();
     std::lock_guard lock(state.mutex);
     state.client = std::move(client);
     state.loggedIn = true;
     state.page = Page::Schedule;
     state.loadedDay = day;
-    std::stable_sort(data.begin(), data.end(),
-                     [](const auto &a, const auto &b) {
-                       return value(a, {"Start"}) < value(b, {"Start"});
-                     });
     state.rows = std::make_shared<const magister::Json>(std::move(data));
     state.status = "Signed in";
   });
@@ -246,38 +264,49 @@ void restoreSavedSession() {
   std::string token = platform::loadSessionToken();
   if (school.empty() || token.empty())
     return;
-  runAsync(
-      [school = std::move(school), token = std::move(token), day = agendaDay] {
-        auto client =
-            std::make_shared<magister::Client>(magister::HttpClient(), school);
-        client->restoreSession(token);
-        magister::Json data;
-        try {
-          data = client->appointments(dateOffset(day - 3), dateOffset(day + 4));
-        } catch (const std::exception &error) {
-          const std::string message = error.what();
-          if (message.find("HTTP 401") == std::string::npos &&
-              message.find("Session expired") == std::string::npos)
-            throw;
-          // The official WebView retains Magister's own login cookie. In the
-          // common case this refreshes silently; school SSO may still ask the
-          // user.
-          client->login();
-          platform::saveSession(school, client->accessToken());
-          data = client->appointments(dateOffset(day - 3), dateOffset(day + 4));
-        }
-        std::stable_sort(data.begin(), data.end(),
-                         [](const auto &a, const auto &b) {
-                           return value(a, {"Start"}) < value(b, {"Start"});
-                         });
-        std::lock_guard lock(state.mutex);
-        state.client = std::move(client);
-        state.loggedIn = true;
-        state.page = Page::Schedule;
-        state.loadedDay = day;
-        state.rows = std::make_shared<const magister::Json>(std::move(data));
-        state.status = "Signed in";
-      });
+  runAsync([school = std::move(school), token = std::move(token),
+            day = agendaDay] {
+    auto client =
+        std::make_shared<magister::Client>(magister::HttpClient(), school);
+    client->restoreSession(token);
+    const auto [from, to] = scheduleRange(day);
+    // Paint the last known agenda straight away; the live refresh below
+    // replaces it once Magister answers.
+    magister::Json cached;
+    if (client->cachedAppointments(from, to, cached)) {
+      sortAgenda(cached);
+      std::lock_guard lock(state.mutex);
+      state.loggedIn = true;
+      state.page = Page::Schedule;
+      state.loadedDay = day;
+      state.rows = std::make_shared<const magister::Json>(std::move(cached));
+      state.status = "Showing saved agenda";
+    }
+    magister::Json data;
+    try {
+      data = client->appointments(from, to);
+    } catch (const std::exception &error) {
+      const std::string message = error.what();
+      if (message.find("HTTP 401") == std::string::npos &&
+          message.find("Session expired") == std::string::npos)
+        throw;
+      // The official WebView retains Magister's own login cookie. In the
+      // common case this refreshes silently; school SSO may still ask the
+      // user.
+      client->login();
+      platform::saveSession(school, client->accessToken());
+      data = client->appointments(from, to);
+    }
+    sortAgenda(data);
+    magister::cache::save();
+    std::lock_guard lock(state.mutex);
+    state.client = std::move(client);
+    state.loggedIn = true;
+    state.page = Page::Schedule;
+    state.loadedDay = day;
+    state.rows = std::make_shared<const magister::Json>(std::move(data));
+    state.status = "Signed in";
+  });
 }
 
 void openBook(magister::Json book) {
@@ -314,7 +343,10 @@ void openDetails(Page page, magister::Json row) {
     }
     const char *kinds[] = {"schedule", "grades",   "assignments",
                            "books",    "messages", "absences"};
+    if (!client)
+      throw std::runtime_error(kNotConnected);
     auto data = client->details(kinds[static_cast<int>(page)], row);
+    magister::cache::save();
     std::lock_guard lock(state.mutex);
     state.detail = std::make_shared<const magister::Json>(std::move(data));
   });
@@ -419,6 +451,7 @@ void initializeImGui(android_app *app) {
   iniPath = platform::internalDataPath() + "/imgui.ini";
   settingsPath = platform::internalDataPath() + "/settings.txt";
   settings = magister::loadSettings(settingsPath);
+  magister::cache::open(platform::internalDataPath() + "/cache.json");
   io.IniFilename = iniPath.c_str();
   updateWindowSize();
   float scale = std::max(1.0f, windowWidth / 400.0f);

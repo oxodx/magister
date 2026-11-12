@@ -117,6 +117,21 @@ bool cancelledAppointment(const magister::Json &row) {
   }
   return false;
 }
+int appointmentInfoType(const magister::Json &row) {
+  if (!row.contains("InfoType") || row["InfoType"].is_null())
+    return 0;
+  if (row["InfoType"].is_number_integer())
+    return row["InfoType"].get<int>();
+  return row["InfoType"].is_string()
+             ? std::atoi(row["InfoType"].get<std::string>().c_str())
+             : 0;
+}
+bool homeworkAppointment(const magister::Json &row) {
+  return appointmentInfoType(row) == 1;
+}
+bool testAppointment(const magister::Json &row) {
+  return appointmentInfoType(row) == 2;
+}
 std::string rowTitle(Page page, const magister::Json &row) {
   if (page == Page::Grades)
     return gradeSubject(row);
@@ -279,10 +294,13 @@ void rowCard(Page page, const magister::Json &row, float height, bool busy) {
     if (cancelled)
       subtitle = "CANCELLED" + (subtitle.empty() ? "" : " / " + subtitle);
     secondary(subtitle);
-    auto homework = value(row, {"Inhoud", "Huiswerk", "Aantekening"});
-    if (settings.showHomeworkBadges && !plainText(homework).empty()) {
+    if (settings.showHomeworkBadges && homeworkAppointment(row)) {
       ImGui::PushStyleColor(ImGuiCol_Text, blue);
       ImGui::TextUnformatted("HOMEWORK");
+      ImGui::PopStyleColor();
+    } else if (testAppointment(row)) {
+      ImGui::PushStyleColor(ImGuiCol_Text, {1, .65f, .2f, 1});
+      ImGui::TextUnformatted("TEST");
       ImGui::PopStyleColor();
     }
     ImGui::PopTextWrapPos();

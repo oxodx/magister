@@ -115,7 +115,7 @@ jobs:
           fi
           repository="$RUNNER_TEMP/fdroid"
           deploy_key="$RUNNER_TEMP/fdroid-deploy-key"
-          printf '%s' "$FDROID_DEPLOY_KEY" > "$deploy_key"
+          printf '%s\n' "$FDROID_DEPLOY_KEY" > "$deploy_key"
           chmod 600 "$deploy_key"
           export GIT_SSH_COMMAND="ssh -i $deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
           git clone git@github.com:oxodx/fdroid.git "$repository"

@@ -248,13 +248,13 @@ std::int64_t monotonicMillis() {
 } // namespace platform
 
 extern "C" JNIEXPORT void JNICALL
-Java_org_magister_nativeapp_MainActivity_nativeText(JNIEnv *, jobject,
-                                                    jint codepoint) {
+Java_nl_oxod_magister_MainActivity_nativeText(JNIEnv *, jobject,
+                                           jint codepoint) {
   if (codepoint >= 0x20 && codepoint != 0x7F)
     platform::addText(static_cast<unsigned int>(codepoint));
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_org_magister_nativeapp_MainActivity_nativeBackspace(JNIEnv *, jobject) {
+Java_nl_oxod_magister_MainActivity_nativeBackspace(JNIEnv *, jobject) {
   platform::addText(8);
 }

@@ -119,12 +119,16 @@ jobs:
           chmod 600 "$deploy_key"
           export GIT_SSH_COMMAND="ssh -i $deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
           git clone git@github.com:oxodx/fdroid.git "$repository"
-          apk="nl.oxod.magister_${{ steps.meta.outputs.version_code }}.apk"
-          mkdir -p "$repository/repo"
-          cp dist/*.apk "$repository/repo/$apk"
+          mkdir -p "$repository/releases"
+          jq -n \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg tag "build-${{ steps.meta.outputs.version_code }}" \
+            --arg asset "magister-${{ steps.meta.outputs.sha }}.apk" \
+            '{repository: $repository, tag: $tag, asset: $asset}' \
+            > "$repository/releases/nl.oxod.magister.json"
           cd "$repository"
           git config user.name 'Magister release bot'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add "repo/$apk"
+          git add releases/nl.oxod.magister.json
           git commit -m "Publish Magister ${{ steps.meta.outputs.version_code }}"
           git push origin main

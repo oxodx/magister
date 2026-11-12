@@ -1,4 +1,4 @@
-package org.magister.nativeapp;
+package nl.oxod.magister;
 
 import android.app.Dialog;
 import android.app.NativeActivity;

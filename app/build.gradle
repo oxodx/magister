@@ -5,7 +5,7 @@ def buildVersionName = project.findProperty('versionName')
 def releaseKeystore = System.getenv('ANDROID_KEYSTORE_PATH')
 
 android {
-  namespace 'org.magister.nativeapp'
+  namespace 'nl.oxod.magister'
   compileSdk 33
   ndkVersion '28.2.13676358'
 
@@ -18,7 +18,7 @@ android {
   }
 
   defaultConfig {
-    applicationId 'org.magister.nativeapp'
+    applicationId 'nl.oxod.magister'
     minSdk 24
     targetSdk 33
     versionCode(buildVersionCode ? buildVersionCode.toInteger() : 1)

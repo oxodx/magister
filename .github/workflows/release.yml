@@ -107,14 +107,18 @@ jobs:
       - name: Publish to shared F-Droid repository
         if: steps.signing.outputs.signed == 'true'
         env:
-          FDROID_REPOSITORY_TOKEN: ${{ secrets.FDROID_REPOSITORY_TOKEN }}
+          FDROID_DEPLOY_KEY: ${{ secrets.FDROID_DEPLOY_KEY }}
         run: |
-          if [ -z "$FDROID_REPOSITORY_TOKEN" ]; then
+          if [ -z "$FDROID_DEPLOY_KEY" ]; then
             echo 'Shared F-Droid publishing is not configured; skipping.'
             exit 0
           fi
           repository="$RUNNER_TEMP/fdroid"
-          git clone "https://x-access-token:${FDROID_REPOSITORY_TOKEN}@github.com/oxodx/fdroid.git" "$repository"
+          deploy_key="$RUNNER_TEMP/fdroid-deploy-key"
+          printf '%s' "$FDROID_DEPLOY_KEY" > "$deploy_key"
+          chmod 600 "$deploy_key"
+          export GIT_SSH_COMMAND="ssh -i $deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+          git clone git@github.com:oxodx/fdroid.git "$repository"
           apk="nl.oxod.magister_${{ steps.meta.outputs.version_code }}.apk"
           cp dist/*.apk "$repository/repo/$apk"
           cd "$repository"

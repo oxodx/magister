@@ -120,6 +120,7 @@ jobs:
           export GIT_SSH_COMMAND="ssh -i $deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
           git clone git@github.com:oxodx/fdroid.git "$repository"
           apk="nl.oxod.magister_${{ steps.meta.outputs.version_code }}.apk"
+          mkdir -p "$repository/repo"
           cp dist/*.apk "$repository/repo/$apk"
           cd "$repository"
           git config user.name 'Magister release bot'

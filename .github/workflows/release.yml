@@ -101,7 +101,7 @@ jobs:
         run: |
           gh release create "build-${{ steps.meta.outputs.version_code }}" dist/*.apk \
             --title "Build ${{ steps.meta.outputs.sha }}" \
-            --notes "Automated build of commit ${{ github.sha }}. Signed builds are also published at https://oxodx.github.io/fdroid/repo for F-Droid clients." \
+            --notes "Automated build of commit ${{ github.sha }}. Signed builds are also published at https://fdroid.oxod.nl for F-Droid clients." \
             --target "$GITHUB_SHA"
 
       - name: Publish to shared F-Droid repository

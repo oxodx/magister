@@ -56,7 +56,7 @@ jobs:
         id: meta
         run: |
           echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
-          echo "version_code=$((1000000000 + GITHUB_RUN_NUMBER))" >> "$GITHUB_OUTPUT"
+          echo "version_code=$(date +%s)" >> "$GITHUB_OUTPUT"
           echo "version_name=1.0.0+$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Prepare signing key
@@ -105,15 +105,19 @@ jobs:
           tag="build-${{ steps.meta.outputs.version_code }}"
           title="Build ${{ steps.meta.outputs.sha }}"
           notes="Automated build of commit $GITHUB_SHA. Signed builds are also published at https://fdroid.oxod.nl for F-Droid clients."
-          release=$(jq -n \
-            --arg tag "$tag" --arg target "$GITHUB_SHA" \
-            --arg title "$title" --arg notes "$notes" \
-            '{tag_name: $tag, target_commitish: $target, name: $title, body: $notes}' \
-            | curl --fail --silent --show-error \
-                --request POST "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/releases" \
-                --header "Authorization: token $RELEASE_TOKEN" \
-                --header 'Content-Type: application/json' \
-                --data-binary @-)
+          release_url="$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/releases/tags/$tag"
+          if ! release=$(curl --fail --silent --show-error \
+              --header "Authorization: token $RELEASE_TOKEN" "$release_url"); then
+            release=$(jq -n \
+              --arg tag "$tag" --arg target "$GITHUB_SHA" \
+              --arg title "$title" --arg notes "$notes" \
+              '{tag_name: $tag, target_commitish: $target, name: $title, body: $notes}' \
+              | curl --fail --silent --show-error \
+                  --request POST "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/releases" \
+                  --header "Authorization: token $RELEASE_TOKEN" \
+                  --header 'Content-Type: application/json' \
+                  --data-binary @-)
+          fi
           release_id=$(printf '%s' "$release" | jq -er '.id')
           for apk in dist/*.apk; do
             curl --fail --silent --show-error \

@@ -99,17 +99,28 @@ jobs:
           cp "$apk" "dist/magister-${{ steps.meta.outputs.sha }}.apk"
 
       - name: Publish commit release
-        uses: https://data.forgejo.org/actions/forgejo-release@v2.13.4
-        with:
-          direction: upload
-          url: ${{ github.server_url }}
-          repo: ${{ github.repository }}
-          sha: ${{ github.sha }}
-          token: ${{ github.token }}
-          tag: build-${{ steps.meta.outputs.version_code }}
-          title: Build ${{ steps.meta.outputs.sha }}
-          release-dir: dist
-          release-notes: Automated build of commit ${{ github.sha }}. Signed builds are also published at https://fdroid.oxod.nl for F-Droid clients.
+        env:
+          RELEASE_TOKEN: ${{ github.token }}
+        run: |
+          tag="build-${{ steps.meta.outputs.version_code }}"
+          title="Build ${{ steps.meta.outputs.sha }}"
+          notes="Automated build of commit $GITHUB_SHA. Signed builds are also published at https://fdroid.oxod.nl for F-Droid clients."
+          release=$(jq -n \
+            --arg tag "$tag" --arg target "$GITHUB_SHA" \
+            --arg title "$title" --arg notes "$notes" \
+            '{tag_name: $tag, target_commitish: $target, name: $title, body: $notes}' \
+            | curl --fail --silent --show-error \
+                --request POST "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/releases" \
+                --header "Authorization: token $RELEASE_TOKEN" \
+                --header 'Content-Type: application/json' \
+                --data-binary @-)
+          release_id=$(printf '%s' "$release" | jq -er '.id')
+          for apk in dist/*.apk; do
+            curl --fail --silent --show-error \
+              --request POST "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/releases/$release_id/assets" \
+              --header "Authorization: token $RELEASE_TOKEN" \
+              --form "attachment=@$apk"
+          done
 
       - name: Publish to shared F-Droid repository
         if: steps.signing.outputs.signed == 'true'

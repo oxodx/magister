@@ -34,8 +34,8 @@ jobs:
             --output "$RUNNER_TEMP/android-command-line-tools.zip"
           unzip -q "$RUNNER_TEMP/android-command-line-tools.zip" -d "$android_home/cmdline-tools"
           mv "$android_home/cmdline-tools/cmdline-tools" "$android_home/cmdline-tools/latest"
-          printf 'ANDROID_HOME=%s\nANDROID_SDK_ROOT=%s\n' "$android_home" "$android_home" >> "$FORGEJO_ENV"
-          printf '%s\n%s\n' "$android_home/cmdline-tools/latest/bin" "$android_home/platform-tools" >> "$FORGEJO_PATH"
+          printf 'ANDROID_HOME=%s\nANDROID_SDK_ROOT=%s\n' "$android_home" "$android_home" >> "$GITHUB_ENV"
+          printf '%s\n%s\n' "$android_home/cmdline-tools/latest/bin" "$android_home/platform-tools" >> "$GITHUB_PATH"
           yes | "$android_home/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
           "$android_home/cmdline-tools/latest/bin/sdkmanager" --install \
             'platform-tools' 'platforms;android-33' 'build-tools;35.0.0' \
@@ -55,9 +55,9 @@ jobs:
       - name: Read build metadata
         id: meta
         run: |
-          echo "sha=$(git rev-parse --short HEAD)" >> "$FORGEJO_OUTPUT"
-          echo "version_code=$((1000000000 + FORGEJO_RUN_NUMBER))" >> "$FORGEJO_OUTPUT"
-          echo "version_name=1.0.0+$(git rev-parse --short HEAD)" >> "$FORGEJO_OUTPUT"
+          echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          echo "version_code=$((1000000000 + GITHUB_RUN_NUMBER))" >> "$GITHUB_OUTPUT"
+          echo "version_name=1.0.0+$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Prepare signing key
         id: signing
@@ -66,9 +66,9 @@ jobs:
         run: |
           if [ -n "$KEYSTORE_BASE64" ]; then
             printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.keystore"
-            echo "signed=true" >> "$FORGEJO_OUTPUT"
+            echo "signed=true" >> "$GITHUB_OUTPUT"
           else
-            echo "signed=false" >> "$FORGEJO_OUTPUT"
+            echo "signed=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build release APK
@@ -102,10 +102,14 @@ jobs:
         uses: https://data.forgejo.org/actions/forgejo-release@v2.13.4
         with:
           direction: upload
+          url: ${{ github.server_url }}
+          repo: ${{ github.repository }}
+          sha: ${{ github.sha }}
+          token: ${{ github.token }}
           tag: build-${{ steps.meta.outputs.version_code }}
           title: Build ${{ steps.meta.outputs.sha }}
           release-dir: dist
-          release-notes: Automated build of commit ${{ forgejo.sha }}. Signed builds are also published at https://fdroid.oxod.nl for F-Droid clients.
+          release-notes: Automated build of commit ${{ github.sha }}. Signed builds are also published at https://fdroid.oxod.nl for F-Droid clients.
 
       - name: Publish to shared F-Droid repository
         if: steps.signing.outputs.signed == 'true'
@@ -124,8 +128,8 @@ jobs:
           git clone git@git.oxod.nl:oxod/fdroid.git "$repository"
           mkdir -p "$repository/releases"
           jq -n \
-            --arg url "$FORGEJO_SERVER_URL" \
-            --arg repository "$FORGEJO_REPOSITORY" \
+            --arg url "$GITHUB_SERVER_URL" \
+            --arg repository "$GITHUB_REPOSITORY" \
             --arg tag "build-${{ steps.meta.outputs.version_code }}" \
             --arg asset "magister-${{ steps.meta.outputs.sha }}.apk" \
             '{url: $url, repository: $repository, tag: $tag, asset: $asset}' \

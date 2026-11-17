@@ -8,38 +8,41 @@ on:
 
 permissions:
   contents: write
-  pages: write
-  id-token: write
 
 jobs:
   release:
     name: Build commit APK
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    environment:
-      name: github-pages
-      url: ${{ steps.pages.outputs.page_url }}
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: https://data.forgejo.org/actions/checkout@v4
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: https://data.forgejo.org/actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v4
-        with:
-          packages: platform-tools
-
-      - name: Install Android packages
-        run: sdkmanager --install 'platforms;android-33' 'build-tools;35.0.0' 'ndk;28.2.13676358' 'cmake;3.22.1'
+        run: |
+          android_home="$RUNNER_TEMP/android-sdk"
+          mkdir -p "$android_home/cmdline-tools"
+          curl --fail --location --retry 3 \
+            https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip \
+            --output "$RUNNER_TEMP/android-command-line-tools.zip"
+          unzip -q "$RUNNER_TEMP/android-command-line-tools.zip" -d "$android_home/cmdline-tools"
+          mv "$android_home/cmdline-tools/cmdline-tools" "$android_home/cmdline-tools/latest"
+          printf 'ANDROID_HOME=%s\nANDROID_SDK_ROOT=%s\n' "$android_home" "$android_home" >> "$FORGEJO_ENV"
+          printf '%s\n%s\n' "$android_home/cmdline-tools/latest/bin" "$android_home/platform-tools" >> "$FORGEJO_PATH"
+          yes | "$android_home/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$android_home/cmdline-tools/latest/bin/sdkmanager" --install \
+            'platform-tools' 'platforms;android-33' 'build-tools;35.0.0' \
+            'ndk;28.2.13676358' 'cmake;3.22.1'
 
       - name: Cache Gradle and native downloads
-        uses: actions/cache@v4
+        uses: https://data.forgejo.org/actions/cache@v4
         with:
           path: |
             ~/.gradle/caches
@@ -52,9 +55,9 @@ jobs:
       - name: Read build metadata
         id: meta
         run: |
-          echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
-          echo "version_code=$((1000000000 + GITHUB_RUN_NUMBER))" >> "$GITHUB_OUTPUT"
-          echo "version_name=1.0.0+$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse --short HEAD)" >> "$FORGEJO_OUTPUT"
+          echo "version_code=$((1000000000 + FORGEJO_RUN_NUMBER))" >> "$FORGEJO_OUTPUT"
+          echo "version_name=1.0.0+$(git rev-parse --short HEAD)" >> "$FORGEJO_OUTPUT"
 
       - name: Prepare signing key
         id: signing
@@ -63,9 +66,9 @@ jobs:
         run: |
           if [ -n "$KEYSTORE_BASE64" ]; then
             printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.keystore"
-            echo "signed=true" >> "$GITHUB_OUTPUT"
+            echo "signed=true" >> "$FORGEJO_OUTPUT"
           else
-            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "signed=false" >> "$FORGEJO_OUTPUT"
           fi
 
       - name: Build release APK
@@ -96,13 +99,13 @@ jobs:
           cp "$apk" "dist/magister-${{ steps.meta.outputs.sha }}.apk"
 
       - name: Publish commit release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "build-${{ steps.meta.outputs.version_code }}" dist/*.apk \
-            --title "Build ${{ steps.meta.outputs.sha }}" \
-            --notes "Automated build of commit ${{ github.sha }}. Signed builds are also published at https://fdroid.oxod.nl for F-Droid clients." \
-            --target "$GITHUB_SHA"
+        uses: https://data.forgejo.org/actions/forgejo-release@v2.13.4
+        with:
+          direction: upload
+          tag: build-${{ steps.meta.outputs.version_code }}
+          title: Build ${{ steps.meta.outputs.sha }}
+          release-dir: dist
+          release-notes: Automated build of commit ${{ forgejo.sha }}. Signed builds are also published at https://fdroid.oxod.nl for F-Droid clients.
 
       - name: Publish to shared F-Droid repository
         if: steps.signing.outputs.signed == 'true'
@@ -118,17 +121,18 @@ jobs:
           printf '%s\n' "$FDROID_DEPLOY_KEY" > "$deploy_key"
           chmod 600 "$deploy_key"
           export GIT_SSH_COMMAND="ssh -i $deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
-          git clone git@github.com:oxodx/fdroid.git "$repository"
+          git clone git@git.oxod.nl:oxod/fdroid.git "$repository"
           mkdir -p "$repository/releases"
           jq -n \
-            --arg repository "$GITHUB_REPOSITORY" \
+            --arg url "$FORGEJO_SERVER_URL" \
+            --arg repository "$FORGEJO_REPOSITORY" \
             --arg tag "build-${{ steps.meta.outputs.version_code }}" \
             --arg asset "magister-${{ steps.meta.outputs.sha }}.apk" \
-            '{repository: $repository, tag: $tag, asset: $asset}' \
+            '{url: $url, repository: $repository, tag: $tag, asset: $asset}' \
             > "$repository/releases/nl.oxod.magister.json"
           cd "$repository"
           git config user.name 'Magister release bot'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git config user.email 'forgejo-actions@oxod.nl'
           git add releases/nl.oxod.magister.json
           git commit -m "Publish Magister ${{ steps.meta.outputs.version_code }}"
           git push origin main

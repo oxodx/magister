@@ -19,6 +19,7 @@ import android.view.WindowManager;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.webkit.CookieManager;
+import android.webkit.JavascriptInterface;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -36,6 +37,7 @@ import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
+import org.json.JSONObject;
 
 public final class MainActivity extends NativeActivity {
   static {
@@ -44,6 +46,7 @@ public final class MainActivity extends NativeActivity {
 
   private static final String SESSION_PREFS = "session";
   private static final String SCHOOL_KEY = "school";
+  private static final String USERNAME_KEY = "username";
   private static final String TOKEN_KEY = "access_token";
   private static final String KEY_ALIAS = "magister_session_key";
   private EditText keyboardEditor;
@@ -137,7 +140,37 @@ public final class MainActivity extends NativeActivity {
       web.setBackgroundColor(Color.WHITE);
       web.getSettings().setJavaScriptEnabled(true);
       web.getSettings().setDomStorageEnabled(true);
+      web.addJavascriptInterface(new Object() {
+        @JavascriptInterface public void saveUsername(String username) {
+          if (username == null || username.trim().isEmpty()) return;
+          getSharedPreferences(SESSION_PREFS, MODE_PRIVATE).edit()
+              .putString(USERNAME_KEY, username.trim())
+              .apply();
+        }
+      }, "MagisterApp");
       web.setWebViewClient(new WebViewClient() {
+        @Override public void onPageFinished(WebView view, String url) {
+          String username = getSharedPreferences(SESSION_PREFS, MODE_PRIVATE)
+              .getString(USERNAME_KEY, "");
+          String quotedUsername = JSONObject.quote(username == null ? "" : username);
+          view.evaluateJavascript("(function(){"
+              + "const selectors=['input[autocomplete=\"username\"]','input[type=\"email\"]',"
+              + "'input[name*=\"user\" i]','input[id*=\"user\" i]'];"
+              + "const field=selectors.map(s=>document.querySelector(s)).find(Boolean);"
+              + "if(!field)return;"
+              + "const saved=" + quotedUsername + ";"
+              + "if(saved&&!field.value){"
+              + "const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;"
+              + "setter.call(field,saved);"
+              + "field.dispatchEvent(new Event('input',{bubbles:true}));"
+              + "field.dispatchEvent(new Event('change',{bubbles:true}));"
+              + "}"
+              + "const persist=()=>{if(field.value)MagisterApp.saveUsername(field.value);};"
+              + "field.addEventListener('input',persist);"
+              + "field.addEventListener('change',persist);"
+              + "})();", null);
+        }
+
         @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
           String url = request.getUrl().toString();
           if (url.contains("/oidc/redirect_callback.html")) {

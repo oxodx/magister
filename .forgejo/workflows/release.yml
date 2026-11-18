@@ -93,7 +93,15 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358"
-          ./gradlew --no-daemon assembleRelease -PversionCode=${{ steps.meta.outputs.version_code }} -PversionName=${{ steps.meta.outputs.version_name }}
+          for attempt in 1 2 3; do
+            if ./gradlew --no-daemon assembleRelease -PversionCode=${{ steps.meta.outputs.version_code }} -PversionName=${{ steps.meta.outputs.version_name }}; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            sleep 5
+          done
 
       - name: Build debug APK
         if: steps.signing.outputs.signed != 'true'

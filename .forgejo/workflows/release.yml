@@ -112,7 +112,7 @@ jobs:
               --arg tag "$tag" --arg target "$GITHUB_SHA" \
               --arg title "$title" --arg notes "$notes" \
               '{tag_name: $tag, target_commitish: $target, name: $title, body: $notes}' \
-              | curl --fail --silent --show-error \
+              | curl --fail-with-body --show-error \
                   --request POST "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/releases" \
                   --header "Authorization: token $RELEASE_TOKEN" \
                   --header 'Content-Type: application/json' \

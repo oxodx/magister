@@ -44,7 +44,7 @@ jobs:
           yes | "$android_home/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
           for attempt in 1 2 3; do
             if "$android_home/cmdline-tools/latest/bin/sdkmanager" --install \
-                'platform-tools' 'platforms;android-33' 'build-tools;35.0.0' \
+                'platform-tools' 'platforms;android-35' 'build-tools;35.0.0' \
                 'ndk;28.2.13676358' 'cmake;3.22.1'; then
               break
             fi

@@ -42,9 +42,17 @@ jobs:
           printf 'ANDROID_HOME=%s\nANDROID_SDK_ROOT=%s\n' "$android_home" "$android_home" >> "$GITHUB_ENV"
           printf '%s\n%s\n' "$android_home/cmdline-tools/latest/bin" "$android_home/platform-tools" >> "$GITHUB_PATH"
           yes | "$android_home/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
-          "$android_home/cmdline-tools/latest/bin/sdkmanager" --install \
-            'platform-tools' 'platforms;android-33' 'build-tools;35.0.0' \
-            'ndk;28.2.13676358' 'cmake;3.22.1'
+          for attempt in 1 2 3; do
+            if "$android_home/cmdline-tools/latest/bin/sdkmanager" --install \
+                'platform-tools' 'platforms;android-33' 'build-tools;35.0.0' \
+                'ndk;28.2.13676358' 'cmake;3.22.1'; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            sleep 5
+          done
 
       - name: Cache Gradle and native downloads
         uses: https://data.forgejo.org/actions/cache@v4

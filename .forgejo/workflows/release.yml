@@ -150,29 +150,34 @@ jobs:
       - name: Publish to shared F-Droid repository
         if: steps.signing.outputs.signed == 'true'
         env:
-          FDROID_DEPLOY_KEY: ${{ secrets.FDROID_DEPLOY_KEY }}
+          FDROID_DEPLOY_TOKEN: ${{ secrets.FDROID_DEPLOY_TOKEN }}
         run: |
-          if [ -z "$FDROID_DEPLOY_KEY" ]; then
+          if [ -z "$FDROID_DEPLOY_TOKEN" ]; then
             echo 'Shared F-Droid publishing is not configured; skipping.'
             exit 0
           fi
-          repository="$RUNNER_TEMP/fdroid"
-          deploy_key="$RUNNER_TEMP/fdroid-deploy-key"
-          printf '%s\n' "$FDROID_DEPLOY_KEY" > "$deploy_key"
-          chmod 600 "$deploy_key"
-          export GIT_SSH_COMMAND="ssh -i $deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
-          git clone git@git.oxod.nl:oxod/fdroid.git "$repository"
-          mkdir -p "$repository/releases"
+          metadata="$RUNNER_TEMP/fdroid-release.json"
           jq -n \
             --arg url "$GITHUB_SERVER_URL" \
             --arg repository "$GITHUB_REPOSITORY" \
             --arg tag "build-${{ steps.meta.outputs.version_code }}" \
             --arg asset "magister-${{ steps.meta.outputs.sha }}.apk" \
             '{url: $url, repository: $repository, tag: $tag, asset: $asset}' \
-            > "$repository/releases/nl.oxod.magister.json"
-          cd "$repository"
-          git config user.name 'Magister release bot'
-          git config user.email 'forgejo-actions@oxod.nl'
-          git add releases/nl.oxod.magister.json
-          git commit -m "Publish Magister ${{ steps.meta.outputs.version_code }}"
-          git push origin main
+            > "$metadata"
+          endpoint="$GITHUB_API_URL/repos/oxod/fdroid/contents/releases/nl.oxod.magister.json"
+          current_sha=$(curl --fail --silent --show-error \
+            --connect-timeout 10 --max-time 60 \
+            --header "Authorization: token $FDROID_DEPLOY_TOKEN" \
+            "$endpoint?ref=main" | jq -er '.sha')
+          jq -n \
+            --arg sha "$current_sha" \
+            --arg content "$(base64 -w0 "$metadata")" \
+            --arg message "chore(release): publish Magister ${{ steps.meta.outputs.version_code }}" \
+            '{sha: $sha, content: $content, message: $message, branch: "main"}' \
+            | curl --fail --silent --show-error \
+                --connect-timeout 10 --max-time 60 \
+                --request PUT "$endpoint" \
+                --header "Authorization: token $FDROID_DEPLOY_TOKEN" \
+                --header 'Content-Type: application/json' \
+                --data-binary @- \
+                --output /dev/null

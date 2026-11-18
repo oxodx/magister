@@ -25,6 +25,11 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Install release tooling
+        run: |
+          apt-get update
+          apt-get install --yes jq
+
       - name: Set up Android SDK
         run: |
           android_home="$RUNNER_TEMP/android-sdk"
